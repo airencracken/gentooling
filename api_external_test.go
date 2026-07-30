@@ -86,3 +86,24 @@ func TestAtomAndUseEvaluationPublicContract(t *testing.T) {
 		t.Fatalf("public USE evaluation = %+v, found %v", decision, found)
 	}
 }
+
+func TestSelectionsAndSystemSnapshotPublicContract(t *testing.T) {
+	selection := gentooling.Selection{
+		Value:  "@world",
+		Kind:   gentooling.SetSelection,
+		Source: gentooling.PolicySource{Path: "/var/lib/portage/world", Line: 1},
+	}
+	if selection.Kind != gentooling.SetSelection || selection.Atom != nil {
+		t.Fatalf("public selection contract changed: %+v", selection)
+	}
+	if got := gentooling.PortageStateLockPath("/var/db/pkg"); got != "/var/db/.pkg.portage_lockfile" {
+		t.Fatalf("public lock path contract = %q", got)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := gentooling.ReadSystemSnapshot(ctx, gentooling.SystemPaths{}, gentooling.SnapshotOptions{})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("public snapshot cancellation = %v", err)
+	}
+}

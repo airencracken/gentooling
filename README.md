@@ -34,6 +34,17 @@ use, err := config.EvaluateUse(ctx, gentooling.PackageContext{
     DeclaredUse: installedPackage.DeclaredUse,
     Stable: true,
 })
+
+selections, err := gentooling.ReadSelections(ctx, paths)
+
+snapshot, err := gentooling.ReadSystemSnapshot(ctx, paths, gentooling.SnapshotOptions{
+    Installed: gentooling.InstalledOptions{
+        Integrity: gentooling.RequireComplete,
+    },
+    Config: gentooling.ConfigOptions{
+        Environment: os.Environ(),
+    },
+})
 ```
 
 `Environment` is always explicit. Passing `nil` performs a disk-only
@@ -44,6 +55,14 @@ input with `ErrInvalidData`. Effective USE evaluation only returns declared
 flags, sorts decisions by name, and retains applied evidence in policy
 precedence order. Consumers decide whether a package is stable and pass that
 decision explicitly.
+
+`ReadSystemSnapshot` observes the Portage-compatible VDB and world fcntl locks
+used by Portage and Arise, then requires two consecutive complete observations
+to agree. This also detects configuration edits and non-cooperating writers
+which do not honor those locks. The call waits for cooperating writers,
+respects context cancellation, retries a bounded number of observations, and
+returns `ErrConcurrentMutation` rather than a mixed view when state does not
+stabilize.
 
 Run the complete validation target with:
 

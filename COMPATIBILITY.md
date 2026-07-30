@@ -19,3 +19,8 @@ Atom parsing, version comparison, ordinary no-match behavior, deterministic
 USE decision ordering, and USE evidence precedence are public compatibility
 contracts. Package stability is explicit consumer input; Gentooling does not
 silently infer accepted keyword policy.
+
+World and system selections are sorted by their rendered value. Duplicate
+world entries are collapsed. Snapshot consistency means shared VDB/world locks
+were held and two complete observations agreed; it does not claim that
+administrator configuration files participate in Portage's transaction lock.

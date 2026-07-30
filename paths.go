@@ -32,3 +32,10 @@ func DefaultSystemPaths(root string) SystemPaths {
 		ActiveProfile: filepath.Join(clean, "etc", "portage", "make.profile"),
 	}
 }
+
+// PortageStateLockPath mirrors portage.locks.lockdir. A state path or
+// directory is protected by a sibling .<basename>.portage_lockfile.
+func PortageStateLockPath(path string) string {
+	path = filepath.Clean(path)
+	return filepath.Join(filepath.Dir(path), "."+filepath.Base(path)+".portage_lockfile")
+}

@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.5.0
+
+- Adds typed, deterministic world and effective profile system selections with
+  package-atom and named-set distinction.
+- Adds consistent combined system snapshots spanning installed packages,
+  effective configuration/profile policy, and selections.
+- Observes Portage-compatible VDB and world fcntl locks shared by Portage,
+  Arise, and cooperating ecosystem tools.
+- Requires two agreeing complete observations and reports persistent change as
+  `ErrConcurrentMutation`.
+- Exposes Portage state-lock path derivation for consumer interoperability.
+
 ## v0.4.0
 
 - Adds public Gentoo atom and arbitrary-precision version parsing, rendering,
