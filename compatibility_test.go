@@ -64,3 +64,22 @@ func TestV020ChangelogRecordsProfileContract(t *testing.T) {
 		}
 	}
 }
+
+func TestReadmeAcknowledgesGentoolkitLineageAndIndependence(t *testing.T) {
+	data, err := os.ReadFile("README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	readme := string(data)
+	for _, required := range []string{
+		"name Gentooling is inspired by Gentoolkit",
+		"established Gentoo package-tooling ecosystem",
+		"independent project",
+		"not affiliated with Gentoolkit",
+		"work alongside existing Gentoo tools, not replace them",
+	} {
+		if !strings.Contains(readme, required) {
+			t.Errorf("README acknowledgment omits %q", required)
+		}
+	}
+}

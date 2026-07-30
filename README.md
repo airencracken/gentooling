@@ -27,3 +27,10 @@ Gentooling is an interoperable library. It does not execute, replace, or modify
 Portage and its surrounding tools.
 
 See [COMPATIBILITY.md](COMPATIBILITY.md) for the pre-1.0 API policy.
+
+## Acknowledgment
+
+The name Gentooling is inspired by Gentoolkit and acknowledges the established
+Gentoo package-tooling ecosystem that made this work possible. Gentooling is an
+independent project: it is not affiliated with Gentoolkit and is intended to
+work alongside existing Gentoo tools, not replace them.
