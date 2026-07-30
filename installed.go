@@ -42,6 +42,17 @@ type UseDeclaration struct {
 	Default UseDefault
 }
 
+func (d UseDeclaration) String() string {
+	switch d.Default {
+	case UseDefaultEnabled:
+		return "+" + d.Name
+	case UseDefaultDisabled:
+		return "-" + d.Name
+	default:
+		return d.Name
+	}
+}
+
 type IssueCode string
 
 const (

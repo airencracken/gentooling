@@ -64,6 +64,9 @@ func TestReadInstalledReturnsSortedOwnedInventory(t *testing.T) {
 	if !reflect.DeepEqual(pkg.DeclaredUse, wantDeclarations) {
 		t.Fatalf("IUSE declarations = %+v, want %+v", pkg.DeclaredUse, wantDeclarations)
 	}
+	if got := []string{pkg.DeclaredUse[0].String(), pkg.DeclaredUse[1].String()}; !reflect.DeepEqual(got, []string{"+ssl", "test"}) {
+		t.Fatalf("rendered IUSE declarations = %v", got)
+	}
 }
 
 func TestReadInstalledRejectsUnknownOptions(t *testing.T) {
