@@ -11,7 +11,13 @@ type SystemPaths struct {
 	VDB           string
 	World         string
 	MakeGlobals   string
+	Repositories  []RepositoryPath
 	ActiveProfile string
+}
+
+type RepositoryPath struct {
+	Name string
+	Path string
 }
 
 func DefaultSystemPaths(root string) SystemPaths {
