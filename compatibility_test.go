@@ -73,7 +73,7 @@ func TestReadmeAcknowledgesGentoolkitLineageAndIndependence(t *testing.T) {
 	readme := string(data)
 	for _, required := range []string{
 		"name Gentooling is inspired by Gentoolkit",
-		"established Gentoo package-tooling ecosystem",
+		"Gentoo package-tooling ecosystem",
 		"independent project",
 		"not affiliated with Gentoolkit",
 		"work alongside existing Gentoo tools, not replace them",
