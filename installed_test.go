@@ -8,7 +8,12 @@ import (
 	"testing"
 )
 
-func writeInstalled(t *testing.T, root, cpv string, overrides map[string]string) string {
+type testTB interface {
+	Helper()
+	Fatal(...any)
+}
+
+func writeInstalled(t testTB, root, cpv string, overrides map[string]string) string {
 	t.Helper()
 	dir := filepath.Join(root, filepath.FromSlash(cpv))
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -142,5 +147,23 @@ func TestReadInstalledRequiredRootErrorsPreserveFilesystemCategory(t *testing.T)
 	_, err := ReadInstalled(context.Background(), SystemPaths{VDB: missing}, InstalledOptions{})
 	if !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func BenchmarkReadInstalledResolverInventory(b *testing.B) {
+	root := b.TempDir()
+	for _, cpv := range []string{
+		"app-misc/alpha-1", "dev-libs/bravo-2.1", "dev-lang/charlie-3.2-r1",
+		"sys-apps/delta-4", "sys-libs/echo-5.1", "virtual/foxtrot-6",
+	} {
+		writeInstalled(b, root, cpv, nil)
+	}
+	paths := SystemPaths{VDB: root}
+	b.ResetTimer()
+	for range b.N {
+		inventory, err := ReadInstalled(context.Background(), paths, InstalledOptions{Integrity: RequireComplete})
+		if err != nil || len(inventory.Packages) != 6 {
+			b.Fatalf("inventory packages = %d, error = %v", len(inventory.Packages), err)
+		}
 	}
 }
