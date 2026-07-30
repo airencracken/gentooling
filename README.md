@@ -64,6 +64,11 @@ respects context cancellation, retries a bounded number of observations, and
 returns `ErrConcurrentMutation` rather than a mixed view when state does not
 stabilize.
 
+`ReadSelections` independently observes the world lock while reading user
+selections. Profile policy remains protected by validation rather than a
+package-manager transaction lock because administrator edits do not
+participate in that lock protocol.
+
 Run the complete validation target with:
 
 ```sh

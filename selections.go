@@ -38,6 +38,14 @@ func ReadSelections(ctx context.Context, paths SystemPaths) (Selections, error) 
 	if err := ctx.Err(); err != nil {
 		return Selections{}, err
 	}
+	if paths.World == "" {
+		return Selections{}, fmt.Errorf("%w: world path is empty", ErrInvalidData)
+	}
+	locks, err := observeLockPaths(ctx, []string{PortageStateLockPath(paths.World)})
+	if err != nil {
+		return Selections{}, err
+	}
+	defer releaseStateLocks(locks)
 	profile, err := ReadProfile(ctx, paths)
 	if err != nil {
 		return Selections{}, err

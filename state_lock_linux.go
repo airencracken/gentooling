@@ -18,7 +18,10 @@ type observedStateLock struct {
 }
 
 func observeStateLocks(ctx context.Context, paths SystemPaths) ([]observedStateLock, error) {
-	lockPaths := []string{PortageStateLockPath(paths.VDB), PortageStateLockPath(paths.World)}
+	return observeLockPaths(ctx, []string{PortageStateLockPath(paths.VDB), PortageStateLockPath(paths.World)})
+}
+
+func observeLockPaths(ctx context.Context, lockPaths []string) ([]observedStateLock, error) {
 	sort.Strings(lockPaths)
 	var locks []observedStateLock
 	for _, path := range lockPaths {
