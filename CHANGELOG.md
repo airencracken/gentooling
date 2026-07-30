@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Adds public Gentoo atom and arbitrary-precision version parsing, rendering,
+  and package matching, including slots, repositories, and USE dependencies.
+- Adds package-specific effective USE evaluation with ordered provenance,
+  IUSE defaults, user and profile policy, stable policy, force, and mask state.
+- Adds a stable `make test` entry point covering unit, race, and vet checks.
+- Licenses Gentooling under GNU GPL version 3.
+
 ## v0.3.0
 
 - Adds explicit effective Portage configuration loading.

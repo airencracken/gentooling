@@ -14,3 +14,8 @@ rather than matching error or issue messages.
 
 Deprecated APIs will normally remain for at least one minor release unless
 retaining them would preserve unsafe behavior.
+
+Atom parsing, version comparison, ordinary no-match behavior, deterministic
+USE decision ordering, and USE evidence precedence are public compatibility
+contracts. Package stability is explicit consumer input; Gentooling does not
+silently infer accepted keyword policy.

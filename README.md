@@ -25,15 +25,41 @@ profile, err := gentooling.ReadProfile(ctx, gentooling.SystemPaths{
 config, err := gentooling.ReadEffectiveConfig(ctx, paths, gentooling.ConfigOptions{
     Environment: os.Environ(),
 })
+
+atom, err := gentooling.ParseAtom(">=sys-kernel/gentoo-sources-6.12:6.12")
+matches, err := atom.Matches(packageID, gentooling.UseState{})
+
+use, err := config.EvaluateUse(ctx, gentooling.PackageContext{
+    ID: packageID,
+    DeclaredUse: installedPackage.DeclaredUse,
+    Stable: true,
+})
 ```
 
 `Environment` is always explicit. Passing `nil` performs a disk-only
 evaluation and never imports the process environment.
 
+Atom matching returns `false, nil` for an ordinary mismatch and wraps malformed
+input with `ErrInvalidData`. Effective USE evaluation only returns declared
+flags, sorts decisions by name, and retains applied evidence in policy
+precedence order. Consumers decide whether a package is stable and pass that
+decision explicitly.
+
+Run the complete validation target with:
+
+```sh
+make test
+```
+
 Gentooling is an interoperable library. It does not execute, replace, or modify
 Portage and its surrounding tools.
 
 See [COMPATIBILITY.md](COMPATIBILITY.md) for the pre-1.0 API policy.
+
+## License
+
+Gentooling is licensed under the GNU General Public License, version 3. See
+[LICENSE](LICENSE).
 
 ## Acknowledgment
 

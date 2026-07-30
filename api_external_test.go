@@ -61,3 +61,28 @@ func TestEffectiveConfigurationPublicContract(t *testing.T) {
 		t.Fatalf("public effective configuration changed: %+v", config)
 	}
 }
+
+func TestAtomAndUseEvaluationPublicContract(t *testing.T) {
+	parsed, err := gentooling.ParseAtom(">=sys-kernel/example-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := gentooling.EffectiveConfig{
+		UserUse: []gentooling.FlagChange{{Name: "modules", Enabled: true, Layer: "user"}},
+	}
+	id := gentooling.PackageID{Category: "sys-kernel", Name: "example", Version: "2"}
+	matched, err := parsed.Matches(id, gentooling.UseState{})
+	if err != nil || !matched {
+		t.Fatalf("public atom matching = %v, %v", matched, err)
+	}
+	evaluation, err := config.EvaluateUse(context.Background(), gentooling.PackageContext{
+		ID: id, DeclaredUse: []gentooling.UseDeclaration{{Name: "modules"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decision, found := evaluation.Decision("modules")
+	if !found || !decision.Enabled {
+		t.Fatalf("public USE evaluation = %+v, found %v", decision, found)
+	}
+}
