@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.4.0
 
 - Adds public Gentoo atom and arbitrary-precision version parsing, rendering,
   and package matching, including slots, repositories, and USE dependencies.
