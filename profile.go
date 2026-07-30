@@ -305,6 +305,9 @@ func profileRepositories(active string, configured []RepositoryPath) (map[string
 		if repository.Name == "" || repository.Path == "" {
 			return nil, fmt.Errorf("%w: repository name and path are required", ErrInvalidData)
 		}
+		if _, exists := result[repository.Name]; exists {
+			return nil, fmt.Errorf("%w: duplicate repository %q", ErrInvalidData, repository.Name)
+		}
 		result[repository.Name] = filepath.Join(filepath.Clean(repository.Path), "profiles")
 	}
 	if len(result) > 0 {

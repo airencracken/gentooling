@@ -27,3 +27,24 @@ func TestInstalledInventoryPublicContract(t *testing.T) {
 		t.Fatalf("public declaration contract changed: %+v", declaration)
 	}
 }
+
+func TestProfilePublicContract(t *testing.T) {
+	_, err := gentooling.ReadProfile(context.Background(), gentooling.SystemPaths{
+		ActiveProfile: "/definitely/missing/make.profile",
+		Repositories: []gentooling.RepositoryPath{
+			{Name: "gentoo", Path: "/var/db/repos/gentoo"},
+		},
+	})
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("profile filesystem error is not discoverable: %v", err)
+	}
+
+	rule := gentooling.PackageFlagRule{
+		Atom:   "app-misc/example",
+		Flags:  []string{"feature"},
+		Source: gentooling.PolicySource{Path: "/repo/profiles/package.use", Line: 4},
+	}
+	if rule.Source.Line != 4 {
+		t.Fatalf("public profile provenance changed: %+v", rule)
+	}
+}

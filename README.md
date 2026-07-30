@@ -14,6 +14,13 @@ paths := gentooling.DefaultSystemPaths("/")
 inventory, err := gentooling.ReadInstalled(ctx, paths, gentooling.InstalledOptions{
     Integrity: gentooling.RequireComplete,
 })
+
+profile, err := gentooling.ReadProfile(ctx, gentooling.SystemPaths{
+    ActiveProfile: "/etc/portage/make.profile",
+    Repositories: []gentooling.RepositoryPath{
+        {Name: "gentoo", Path: "/var/db/repos/gentoo"},
+    },
+})
 ```
 
 Gentooling is an interoperable library. It does not execute, replace, or modify

@@ -44,3 +44,23 @@ func TestV010ChangelogRecordsIntegrityContract(t *testing.T) {
 		}
 	}
 }
+
+func TestV020ChangelogRecordsProfileContract(t *testing.T) {
+	data, err := os.ReadFile("CHANGELOG.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	changelog := string(data)
+	for _, required := range []string{
+		"v0.2.0",
+		"active profile graph",
+		"package-policy source lines",
+		"configured repository roots",
+		"profile escapes",
+		"context cancellation",
+	} {
+		if !strings.Contains(changelog, required) {
+			t.Errorf("v0.2.0 changelog omits %q", required)
+		}
+	}
+}

@@ -17,6 +17,7 @@ type SystemPaths struct {
 
 type RepositoryPath struct {
 	Name string
+	// Path is the repository root containing profiles/, metadata/, and ebuilds.
 	Path string
 }
 

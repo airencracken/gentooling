@@ -176,3 +176,12 @@ func TestReadProfileRejectsUnknownCrossRepositoryParent(t *testing.T) {
 		t.Fatalf("error = %v", err)
 	}
 }
+
+func TestReadProfileRejectsDuplicateRepositoryIdentities(t *testing.T) {
+	paths, _, _ := profileFixture(t)
+	paths.Repositories = append(paths.Repositories, paths.Repositories[0])
+	_, err := ReadProfile(context.Background(), paths)
+	if !errors.Is(err, ErrInvalidData) {
+		t.Fatalf("error = %v", err)
+	}
+}
