@@ -5,7 +5,11 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strconv"
+	"sync"
 	"testing"
+	"time"
 )
 
 type testTB interface {
@@ -52,6 +56,28 @@ func TestReadInstalledReturnsSortedOwnedInventory(t *testing.T) {
 	pkg := got.Packages[1]
 	if pkg.ID.Slot != "0" || pkg.ID.Subslot != "1" || pkg.ID.Repository != "gentoo" || pkg.Build.Time != 1700000000 || pkg.Build.Counter != 42 || pkg.Contents == "" {
 		t.Fatalf("metadata lost: %+v", pkg)
+	}
+	wantDeclarations := []UseDeclaration{
+		{Name: "ssl", Default: UseDefaultEnabled},
+		{Name: "test", Default: UseDefaultUnspecified},
+	}
+	if !reflect.DeepEqual(pkg.DeclaredUse, wantDeclarations) {
+		t.Fatalf("IUSE declarations = %+v, want %+v", pkg.DeclaredUse, wantDeclarations)
+	}
+}
+
+func TestReadInstalledRejectsUnknownOptions(t *testing.T) {
+	root := t.TempDir()
+	for name, options := range map[string]InstalledOptions{
+		"integrity": {Integrity: IntegrityMode(255)},
+		"workers":   {Workers: -1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := ReadInstalled(context.Background(), SystemPaths{VDB: root}, options)
+			if !errors.Is(err, ErrInvalidData) {
+				t.Fatalf("error = %v", err)
+			}
+		})
 	}
 }
 
@@ -133,6 +159,129 @@ func TestReadInstalledRejectsSymlinkedRequiredMetadata(t *testing.T) {
 	}
 }
 
+func TestReadInstalledRejectsSymlinkedOptionalMetadata(t *testing.T) {
+	root := t.TempDir()
+	dir := writeInstalled(t, root, "app-misc/example-1", nil)
+	if err := os.Remove(filepath.Join(dir, "DEPEND")); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "DEPEND")
+	if err := os.WriteFile(outside, []byte("dev-libs/escaped\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, "DEPEND")); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadInstalled(context.Background(), SystemPaths{VDB: root}, InstalledOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Packages) != 1 || got.Packages[0].Dependencies.Depend != "" {
+		t.Fatalf("optional symlink data escaped containment: %+v", got.Packages)
+	}
+	if len(got.Issues) != 1 || got.Issues[0].Code != IssueCorruptRecord {
+		t.Fatalf("optional symlink lacks typed issue: %+v", got.Issues)
+	}
+}
+
+func TestReadInstalledDoesNotReadContentsUnlessRequested(t *testing.T) {
+	root := t.TempDir()
+	dir := writeInstalled(t, root, "app-misc/example-1", nil)
+	contents := filepath.Join(dir, "CONTENTS")
+	if err := os.Chmod(contents, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(contents, 0o644) })
+
+	without, err := ReadInstalled(context.Background(), SystemPaths{VDB: root}, InstalledOptions{Integrity: RequireComplete})
+	if err != nil || len(without.Packages) != 1 || without.Packages[0].Contents != "" {
+		t.Fatalf("identity-only scan read CONTENTS: inventory=%+v error=%v", without, err)
+	}
+	_, err = ReadInstalled(context.Background(), SystemPaths{VDB: root}, InstalledOptions{Integrity: RequireComplete, IncludeContents: true})
+	if !errors.Is(err, ErrIncompleteEvidence) {
+		t.Fatalf("CONTENTS read error = %v", err)
+	}
+}
+
+func TestReadInstalledDetectsConcurrentRecordMutation(t *testing.T) {
+	root := t.TempDir()
+	dir := writeInstalled(t, root, "app-misc/example-1", nil)
+	var once sync.Once
+	options := InstalledOptions{
+		Integrity: RequireComplete,
+		afterRequiredSnapshot: func(record string) {
+			once.Do(func() {
+				if err := os.WriteFile(filepath.Join(record, "SLOT"), []byte("changed-slot\n"), 0o644); err != nil {
+					t.Error(err)
+				}
+			})
+		},
+	}
+	got, err := ReadInstalled(context.Background(), SystemPaths{VDB: root}, options)
+	if !errors.Is(err, ErrIncompleteEvidence) || len(got.Packages) != 0 {
+		t.Fatalf("mutating scan inventory=%+v error=%v", got, err)
+	}
+	if len(got.Issues) != 1 || got.Issues[0].Code != IssueConcurrentMutation ||
+		!errors.Is(got.Issues[0], ErrConcurrentMutation) ||
+		got.Issues[0].Path != filepath.Join(dir, "SLOT") {
+		t.Fatalf("mutation issue = %+v", got.Issues)
+	}
+}
+
+func TestReadInstalledUsesBoundedConcurrentWorkers(t *testing.T) {
+	root := t.TempDir()
+	writeInstalled(t, root, "app-misc/one-1", nil)
+	writeInstalled(t, root, "app-misc/two-1", nil)
+	entered := make(chan struct{}, 2)
+	release := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		_, err := ReadInstalled(context.Background(), SystemPaths{VDB: root}, InstalledOptions{
+			Integrity: RequireComplete,
+			Workers:   2,
+			beforeRecordRead: func(string) {
+				entered <- struct{}{}
+				<-release
+			},
+		})
+		done <- err
+	}()
+	for range 2 {
+		select {
+		case <-entered:
+		case <-time.After(2 * time.Second):
+			t.Fatal("record reads did not run concurrently")
+		}
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReadInstalledOrderingIsIndependentOfWorkerCount(t *testing.T) {
+	root := t.TempDir()
+	for _, cpv := range []string{"dev-libs/zeta-2", "app-misc/alpha-1", "sys-apps/middle-3"} {
+		writeInstalled(t, root, cpv, nil)
+	}
+	var baseline []string
+	for _, workers := range []int{1, 2, 8} {
+		got, err := ReadInstalled(context.Background(), SystemPaths{VDB: root}, InstalledOptions{Integrity: RequireComplete, Workers: workers})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var identities []string
+		for _, pkg := range got.Packages {
+			identities = append(identities, pkg.ID.CPV())
+		}
+		if baseline == nil {
+			baseline = identities
+		} else if !reflect.DeepEqual(identities, baseline) {
+			t.Fatalf("workers=%d identities=%v baseline=%v", workers, identities, baseline)
+		}
+	}
+}
+
 func TestReadInstalledHonorsCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -165,5 +314,31 @@ func BenchmarkReadInstalledResolverInventory(b *testing.B) {
 		if err != nil || len(inventory.Packages) != 6 {
 			b.Fatalf("inventory packages = %d, error = %v", len(inventory.Packages), err)
 		}
+	}
+}
+
+func BenchmarkReadInstalledLargeInventory(b *testing.B) {
+	root := b.TempDir()
+	for index := range 512 {
+		cpv := "app-misc/example-" + strconv.Itoa(index) + "-1"
+		writeInstalled(b, root, cpv, nil)
+	}
+	paths := SystemPaths{VDB: root}
+	for _, workers := range []int{1, 0} {
+		name := "serial"
+		if workers == 0 {
+			name = "default"
+		}
+		b.Run(name, func(b *testing.B) {
+			for range b.N {
+				inventory, err := ReadInstalled(context.Background(), paths, InstalledOptions{
+					Integrity: RequireComplete,
+					Workers:   workers,
+				})
+				if err != nil || len(inventory.Packages) != 512 {
+					b.Fatalf("inventory packages = %d, error = %v", len(inventory.Packages), err)
+				}
+			}
+		})
 	}
 }

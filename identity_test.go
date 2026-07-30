@@ -19,7 +19,7 @@ func TestParsePackageID(t *testing.T) {
 }
 
 func TestParsePackageIDRejectsAdversarialInputs(t *testing.T) {
-	for _, value := range []string{"", "dev-libs", "/foo-1", "dev-libs/-1", "dev-libs/foo", "dev-libs/foo-x", "dev-libs/foo-1/other"} {
+	for _, value := range []string{"", "dev-libs", "/foo-1", "./foo-1", "../foo-1", "dev-libs/-1", "dev-libs/foo", "dev-libs/foo-x", "dev-libs/foo-1/other"} {
 		t.Run(value, func(t *testing.T) {
 			if _, err := ParsePackageID(value); !errors.Is(err, ErrInvalidData) {
 				t.Fatalf("error = %v", err)

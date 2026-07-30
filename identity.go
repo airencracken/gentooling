@@ -37,7 +37,7 @@ func (p PackageID) CPV() string {
 // does not accept dependency atom operators.
 func ParsePackageID(value string) (PackageID, error) {
 	category, pf, ok := strings.Cut(value, "/")
-	if !ok || !categoryPattern.MatchString(category) || pf == "" || strings.Contains(pf, "/") {
+	if !ok || category == "." || category == ".." || !categoryPattern.MatchString(category) || pf == "" || strings.Contains(pf, "/") {
 		return PackageID{}, fmt.Errorf("%w: package identity %q", ErrInvalidData, value)
 	}
 	for index := 0; index < len(pf)-1; index++ {
