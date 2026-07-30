@@ -21,7 +21,14 @@ profile, err := gentooling.ReadProfile(ctx, gentooling.SystemPaths{
         {Name: "gentoo", Path: "/var/db/repos/gentoo"},
     },
 })
+
+config, err := gentooling.ReadEffectiveConfig(ctx, paths, gentooling.ConfigOptions{
+    Environment: os.Environ(),
+})
 ```
+
+`Environment` is always explicit. Passing `nil` performs a disk-only
+evaluation and never imports the process environment.
 
 Gentooling is an interoperable library. It does not execute, replace, or modify
 Portage and its surrounding tools.

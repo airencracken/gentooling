@@ -48,3 +48,16 @@ func TestProfilePublicContract(t *testing.T) {
 		t.Fatalf("public profile provenance changed: %+v", rule)
 	}
 }
+
+func TestEffectiveConfigurationPublicContract(t *testing.T) {
+	config, err := gentooling.ReadEffectiveConfig(context.Background(), gentooling.SystemPaths{}, gentooling.ConfigOptions{
+		Environment: []string{"USE=inspection"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(config.CommandUse) != 1 || config.CommandUse[0].Name != "inspection" ||
+		config.CommandUse[0].Layer != "command" {
+		t.Fatalf("public effective configuration changed: %+v", config)
+	}
+}

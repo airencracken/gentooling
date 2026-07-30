@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.3.0
+
+- Adds explicit effective Portage configuration loading.
+- Combines make.globals, ordered profile defaults, user make.conf, package.use,
+  and an explicitly supplied command environment.
+- Retains global and package USE policy provenance.
+- Materializes configured USE_EXPAND values without consulting process state.
+- Rejects malformed assignments and symlinked configuration policy.
+- Deliberately leaves package atom matching and final USE evaluation to the
+  next public carveout.
+
 ## v0.2.0
 
 - Adds explicit, root-aware active profile graph loading.

@@ -83,3 +83,23 @@ func TestReadmeAcknowledgesGentoolkitLineageAndIndependence(t *testing.T) {
 		}
 	}
 }
+
+func TestV030ChangelogRecordsEffectiveConfigurationContract(t *testing.T) {
+	data, err := os.ReadFile("CHANGELOG.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	changelog := string(data)
+	for _, required := range []string{
+		"v0.3.0",
+		"effective Portage configuration",
+		"explicitly supplied command environment",
+		"USE policy provenance",
+		"USE_EXPAND",
+		"package atom matching",
+	} {
+		if !strings.Contains(changelog, required) {
+			t.Errorf("v0.3.0 changelog omits %q", required)
+		}
+	}
+}

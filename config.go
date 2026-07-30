@@ -1,0 +1,348 @@
+package gentooling
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+)
+
+type ConfigOptions struct {
+	// Environment is command input, not the process environment. Only
+	// documented Portage variables and active USE_EXPAND variables are used.
+	Environment []string
+}
+
+type FlagChange struct {
+	Name    string
+	Enabled bool
+	Source  PolicySource
+	Layer   string
+}
+
+type EffectiveConfig struct {
+	Variables         map[string]string
+	Profile           *Profile
+	ProfileUse        []FlagChange
+	UserUse           []FlagChange
+	CommandUse        []FlagChange
+	UserPackageUse    []PackageFlagRule
+	UseExpand         []string
+	UseExpandHidden   []string
+	UseExpandImplicit []string
+}
+
+type configValue struct {
+	name   string
+	value  string
+	source PolicySource
+	layer  string
+}
+
+var configReferencePattern = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
+
+// ReadEffectiveConfig loads make.globals, the active profile graph, user
+// make.conf/package.use, and an explicit command environment. It never reads
+// the process environment or paths absent from SystemPaths.
+func ReadEffectiveConfig(ctx context.Context, paths SystemPaths, options ConfigOptions) (EffectiveConfig, error) {
+	if err := ctx.Err(); err != nil {
+		return EffectiveConfig{}, err
+	}
+	values := make(map[string]configValue)
+	var allAssignments []configValue
+	var profile *Profile
+	var err error
+	if paths.MakeGlobals != "" {
+		assignments, err := readConfigAssignments(ctx, paths.MakeGlobals, true)
+		if err != nil {
+			return EffectiveConfig{}, fmt.Errorf("load make.globals: %w", err)
+		}
+		allAssignments = append(allAssignments, assignments...)
+		mergeConfigValues(values, assignments)
+	}
+	if paths.ActiveProfile != "" {
+		loaded, err := ReadProfile(ctx, paths)
+		if err != nil {
+			return EffectiveConfig{}, err
+		}
+		profile = &loaded
+		for _, layer := range loaded.Layers {
+			assignments, err := readConfigAssignments(ctx, filepath.Join(layer.Path, "make.defaults"), false)
+			if err != nil {
+				return EffectiveConfig{}, err
+			}
+			for index := range assignments {
+				assignments[index].layer = "profile"
+			}
+			allAssignments = append(allAssignments, assignments...)
+			mergeConfigValues(values, assignments)
+		}
+	}
+	var userAssignments []configValue
+	if paths.ConfigRoot != "" {
+		userAssignments, err = readConfigAssignments(ctx, filepath.Join(paths.ConfigRoot, "make.conf"), false)
+		if err != nil {
+			return EffectiveConfig{}, err
+		}
+	}
+	for index := range userAssignments {
+		userAssignments[index].layer = "user"
+	}
+	allAssignments = append(allAssignments, userAssignments...)
+	mergeConfigValues(values, userAssignments)
+	resolveConfigValues(values)
+
+	result := EffectiveConfig{Variables: make(map[string]string), Profile: profile}
+	for name, value := range values {
+		result.Variables[name] = value.value
+	}
+	result.UseExpand = strings.Fields(result.Variables["USE_EXPAND"])
+	result.UseExpandHidden = strings.Fields(result.Variables["USE_EXPAND_HIDDEN"])
+	result.UseExpandImplicit = strings.Fields(result.Variables["USE_EXPAND_IMPLICIT"])
+	result.ProfileUse, result.UserUse = configUseChanges(allAssignments, result.UseExpand)
+	if paths.ConfigRoot != "" {
+		result.UserPackageUse, err = readConfigPackageRules(ctx, filepath.Join(paths.ConfigRoot, "package.use"))
+		if err != nil {
+			return EffectiveConfig{}, err
+		}
+	}
+	if err := applyConfigEnvironment(&result, options.Environment); err != nil {
+		return EffectiveConfig{}, err
+	}
+	return cloneEffectiveConfig(result), nil
+}
+
+func readConfigAssignments(ctx context.Context, path string, required bool) ([]configValue, error) {
+	info, err := os.Lstat(path)
+	if errors.Is(err, fs.ErrNotExist) && !required {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("inspect configuration %q: %w", path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%w: configuration %q is not a regular file", ErrInvalidData, path)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read configuration %q: %w", path, err)
+	}
+	var result []configValue
+	for index, raw := range strings.Split(string(data), "\n") {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		line := strings.TrimSpace(strings.TrimSuffix(raw, "\r"))
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		name, value, found := strings.Cut(line, "=")
+		if !found {
+			return nil, fmt.Errorf("%w: malformed assignment at %s:%d", ErrInvalidData, path, index+1)
+		}
+		name = strings.TrimSpace(strings.TrimPrefix(name, "export "))
+		if !validConfigName(name) {
+			return nil, fmt.Errorf("%w: invalid variable at %s:%d", ErrInvalidData, path, index+1)
+		}
+		result = append(result, configValue{
+			name:   name,
+			value:  stripProfileQuotes(strings.TrimSpace(value)),
+			source: PolicySource{Path: path, Line: index + 1},
+			layer:  "global",
+		})
+	}
+	return result, nil
+}
+
+func mergeConfigValues(destination map[string]configValue, assignments []configValue) {
+	for _, assignment := range assignments {
+		assignment.value = configReferencePattern.ReplaceAllStringFunc(assignment.value, func(reference string) string {
+			match := configReferencePattern.FindStringSubmatch(reference)
+			if previous, exists := destination[match[1]]; exists {
+				return previous.value
+			}
+			return reference
+		})
+		if previous, exists := destination[assignment.name]; exists && incrementalConfigVariable(assignment.name) {
+			assignment.value = strings.TrimSpace(previous.value + " " + assignment.value)
+		}
+		destination[assignment.name] = assignment
+	}
+}
+
+func resolveConfigValues(values map[string]configValue) {
+	for pass := 0; pass < len(values)+1; pass++ {
+		changed := false
+		for name, entry := range values {
+			resolved := configReferencePattern.ReplaceAllStringFunc(entry.value, func(reference string) string {
+				match := configReferencePattern.FindStringSubmatch(reference)
+				return values[match[1]].value
+			})
+			if resolved != entry.value {
+				entry.value = resolved
+				values[name] = entry
+				changed = true
+			}
+		}
+		if !changed {
+			return
+		}
+	}
+}
+
+func configUseChanges(assignments []configValue, expand []string) ([]FlagChange, []FlagChange) {
+	var profile, user []FlagChange
+	add := func(raw string, source configValue) {
+		for _, token := range strings.Fields(raw) {
+			change := flagChange(token, source.source, source.layer)
+			if source.layer == "user" {
+				user = append(user, change)
+			} else {
+				profile = append(profile, change)
+			}
+		}
+	}
+	expandSet := make(map[string]bool, len(expand))
+	for _, group := range expand {
+		expandSet[group] = true
+	}
+	for _, value := range assignments {
+		switch {
+		case value.name == "USE":
+			add(value.value, value)
+		case expandSet[value.name]:
+			var tokens []string
+			for _, item := range strings.Fields(value.value) {
+				negative := strings.HasPrefix(item, "-")
+				name := strings.TrimPrefix(item, "-")
+				token := strings.ToLower(value.name) + "_" + name
+				if negative {
+					token = "-" + token
+				}
+				tokens = append(tokens, token)
+			}
+			add(strings.Join(tokens, " "), value)
+		}
+	}
+	return profile, user
+}
+
+func applyConfigEnvironment(config *EffectiveConfig, environment []string) error {
+	allowed := map[string]bool{
+		"USE": true, "ARCH": true, "CHOST": true, "CBUILD": true, "CTARGET": true,
+		"CFLAGS": true, "CXXFLAGS": true, "CPPFLAGS": true, "LDFLAGS": true,
+		"MAKEOPTS": true, "FEATURES": true, "ACCEPT_KEYWORDS": true,
+		"ACCEPT_LICENSE": true,
+	}
+	for _, group := range config.UseExpand {
+		allowed[group] = true
+	}
+	for index, entry := range environment {
+		name, value, found := strings.Cut(entry, "=")
+		if !found || !allowed[name] {
+			continue
+		}
+		config.Variables[name] = value
+		source := PolicySource{Path: "environment", Line: index + 1}
+		if name == "USE" {
+			for _, token := range strings.Fields(value) {
+				config.CommandUse = append(config.CommandUse, flagChange(token, source, "command"))
+			}
+		}
+		for _, group := range config.UseExpand {
+			if name != group {
+				continue
+			}
+			for _, token := range strings.Fields(value) {
+				negative := strings.HasPrefix(token, "-")
+				flag := strings.ToLower(group) + "_" + strings.TrimPrefix(token, "-")
+				if negative {
+					flag = "-" + flag
+				}
+				config.CommandUse = append(config.CommandUse, flagChange(flag, source, "command"))
+			}
+		}
+	}
+	return nil
+}
+
+func readConfigPackageRules(ctx context.Context, path string) ([]PackageFlagRule, error) {
+	info, err := os.Lstat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var files []string
+	if info.Mode().IsRegular() {
+		files = []string{path}
+	} else if info.IsDir() && info.Mode()&os.ModeSymlink == 0 {
+		entries, err := os.ReadDir(path)
+		if err != nil {
+			return nil, err
+		}
+		for _, entry := range entries {
+			if entry.Type()&os.ModeSymlink != 0 {
+				return nil, fmt.Errorf("%w: package.use entry %q is a symlink", ErrInvalidData, filepath.Join(path, entry.Name()))
+			}
+			if entry.Type().IsRegular() && !strings.HasPrefix(entry.Name(), ".") && !strings.HasSuffix(entry.Name(), "~") {
+				files = append(files, filepath.Join(path, entry.Name()))
+			}
+		}
+		sort.Strings(files)
+	} else {
+		return nil, fmt.Errorf("%w: package.use %q is not a regular file or directory", ErrInvalidData, path)
+	}
+	var rules []PackageFlagRule
+	for _, file := range files {
+		parsed, err := readPackageRules(ctx, file)
+		if err != nil {
+			return nil, err
+		}
+		rules = append(rules, parsed...)
+	}
+	return rules, nil
+}
+
+func flagChange(raw string, source PolicySource, layer string) FlagChange {
+	return FlagChange{Name: strings.TrimPrefix(raw, "-"), Enabled: !strings.HasPrefix(raw, "-"), Source: source, Layer: layer}
+}
+
+func validConfigName(name string) bool {
+	if name == "" || !((name[0] >= 'A' && name[0] <= 'Z') || name[0] == '_') {
+		return false
+	}
+	for _, character := range name[1:] {
+		if !((character >= 'A' && character <= 'Z') || (character >= '0' && character <= '9') || character == '_') {
+			return false
+		}
+	}
+	return true
+}
+
+func incrementalConfigVariable(name string) bool {
+	switch name {
+	case "USE", "USE_EXPAND", "USE_EXPAND_HIDDEN", "USE_EXPAND_IMPLICIT", "FEATURES", "ACCEPT_KEYWORDS", "ACCEPT_LICENSE":
+		return true
+	default:
+		return false
+	}
+}
+
+func cloneEffectiveConfig(input EffectiveConfig) EffectiveConfig {
+	input.Variables = cloneStringMap(input.Variables)
+	input.ProfileUse = append([]FlagChange(nil), input.ProfileUse...)
+	input.UserUse = append([]FlagChange(nil), input.UserUse...)
+	input.CommandUse = append([]FlagChange(nil), input.CommandUse...)
+	input.UserPackageUse = cloneRules(input.UserPackageUse)
+	input.UseExpand = append([]string(nil), input.UseExpand...)
+	input.UseExpandHidden = append([]string(nil), input.UseExpandHidden...)
+	input.UseExpandImplicit = append([]string(nil), input.UseExpandImplicit...)
+	return input
+}
