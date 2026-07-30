@@ -45,6 +45,13 @@ snapshot, err := gentooling.ReadSystemSnapshot(ctx, paths, gentooling.SnapshotOp
         Environment: os.Environ(),
     },
 })
+
+visibility, err := snapshot.Config.EvaluateVisibility(ctx,
+    gentooling.PackageVisibilityContext{
+        ID: candidateID,
+        Keywords: []string{"amd64", "~arm64"},
+    },
+)
 ```
 
 `Environment` is always explicit. Passing `nil` performs a disk-only
@@ -68,6 +75,12 @@ stabilize.
 selections. Profile policy remains protected by validation rather than a
 package-manager transaction lock because administrator edits do not
 participate in that lock protocol.
+
+Prospective visibility evaluation combines the candidate's repository
+`KEYWORDS` with effective `ACCEPT_KEYWORDS`, matching
+`package.accept_keywords` rules, and repository/profile/user
+`package.mask`/`package.unmask` policy. Ordinary rejection is returned as a
+typed result with ordered evidence; malformed policy remains an error.
 
 Run the complete validation target with:
 

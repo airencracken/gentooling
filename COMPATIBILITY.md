@@ -24,3 +24,8 @@ World and system selections are sorted by their rendered value. Duplicate
 world entries are collapsed. Snapshot consistency means shared VDB/world locks
 were held and two complete observations agreed; it does not claim that
 administrator configuration files participate in Portage's transaction lock.
+
+Visibility outcomes, stability, effective keyword ordering, mask/unmask
+precedence, and evidence ordering are public contracts. An empty matching
+`package.accept_keywords` rule means the host testing keyword. Explicit command
+environment `ACCEPT_KEYWORDS` resets disk policy before applying its values.

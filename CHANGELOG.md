@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.6.0
+
+- Adds prospective package visibility evaluation with typed visible,
+  package-masked, keyword-masked, and unsupported-architecture outcomes.
+- Loads effective global and package-specific keyword policy with ordered
+  additions, removals, empty-rule testing acceptance, and provenance.
+- Loads repository, active-profile, and user package mask/unmask stacks with
+  ordered removal semantics and mask reasons.
+- Returns stability and a complete policy evidence trail for consumers such as
+  Arise and Maize.
+- Validates malformed atoms, keywords, policy files, and symlinked policy
+  entries as typed invalid evidence.
+
 ## v0.5.0
 
 - Adds typed, deterministic world and effective profile system selections with

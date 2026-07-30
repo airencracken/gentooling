@@ -35,6 +35,10 @@ type EffectiveConfig struct {
 	UseExpand         []string
 	UseExpandHidden   []string
 	UseExpandImplicit []string
+	AcceptKeywords    []KeywordChange
+	PackageKeywords   []PackageKeywordRule
+	PackageMasks      []PackageMaskRule
+	PackageUnmasks    []PackageMaskRule
 }
 
 type configValue struct {
@@ -111,7 +115,11 @@ func ReadEffectiveConfig(ctx context.Context, paths SystemPaths, options ConfigO
 			return EffectiveConfig{}, err
 		}
 	}
+	result.AcceptKeywords = configKeywordChanges(allAssignments)
 	if err := applyConfigEnvironment(&result, options.Environment); err != nil {
+		return EffectiveConfig{}, err
+	}
+	if err := loadVisibilityPolicy(ctx, paths, &result); err != nil {
 		return EffectiveConfig{}, err
 	}
 	return cloneEffectiveConfig(result), nil
@@ -249,6 +257,12 @@ func applyConfigEnvironment(config *EffectiveConfig, environment []string) error
 		}
 		config.Variables[name] = value
 		source := PolicySource{Path: "environment", Line: index + 1}
+		if name == "ACCEPT_KEYWORDS" {
+			config.AcceptKeywords = append(config.AcceptKeywords, keywordChange("-*", source, "command"))
+			for _, token := range strings.Fields(value) {
+				config.AcceptKeywords = append(config.AcceptKeywords, keywordChange(token, source, "command"))
+			}
+		}
 		if name == "USE" {
 			for _, token := range strings.Fields(value) {
 				config.CommandUse = append(config.CommandUse, flagChange(token, source, "command"))
@@ -344,5 +358,9 @@ func cloneEffectiveConfig(input EffectiveConfig) EffectiveConfig {
 	input.UseExpand = append([]string(nil), input.UseExpand...)
 	input.UseExpandHidden = append([]string(nil), input.UseExpandHidden...)
 	input.UseExpandImplicit = append([]string(nil), input.UseExpandImplicit...)
+	input.AcceptKeywords = append([]KeywordChange(nil), input.AcceptKeywords...)
+	input.PackageKeywords = clonePackageKeywordRules(input.PackageKeywords)
+	input.PackageMasks = append([]PackageMaskRule(nil), input.PackageMasks...)
+	input.PackageUnmasks = append([]PackageMaskRule(nil), input.PackageUnmasks...)
 	return input
 }

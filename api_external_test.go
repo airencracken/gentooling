@@ -107,3 +107,23 @@ func TestSelectionsAndSystemSnapshotPublicContract(t *testing.T) {
 		t.Fatalf("public snapshot cancellation = %v", err)
 	}
 }
+
+func TestProspectiveVisibilityPublicContract(t *testing.T) {
+	config := gentooling.EffectiveConfig{
+		Variables: map[string]string{"ARCH": "amd64"},
+		PackageKeywords: []gentooling.PackageKeywordRule{{
+			Atom:   "sys-kernel/gentoo-sources",
+			Source: gentooling.PolicySource{Path: "package.accept_keywords", Line: 1},
+		}},
+	}
+	result, err := config.EvaluateVisibility(context.Background(), gentooling.PackageVisibilityContext{
+		ID:       gentooling.PackageID{Category: "sys-kernel", Name: "gentoo-sources", Version: "6.12"},
+		Keywords: []string{"~amd64"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Visible || result.Stable || result.Status != gentooling.VisibilityVisible {
+		t.Fatalf("public visibility contract = %+v", result)
+	}
+}
