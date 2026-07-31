@@ -187,4 +187,10 @@ func TestKernelConsumerPublicContracts(t *testing.T) {
 	if !errors.Is(gentooling.ErrCandidateNotFound, gentooling.ErrCandidateNotFound) {
 		t.Fatal("candidate error contract changed")
 	}
+	evaluated := gentooling.EvaluatedKernelRequirements{Complete: true, Requirements: []gentooling.EvaluatedKernelRequirement{{
+		Symbol: "MODULES", Applicability: gentooling.Applicable,
+	}}}
+	if !evaluated.Complete || evaluated.Requirements[0].Applicability != gentooling.Applicable {
+		t.Fatalf("evaluated kernel contract = %+v", evaluated)
+	}
 }

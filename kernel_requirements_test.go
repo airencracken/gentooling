@@ -41,11 +41,8 @@ pkg_setup() {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Requirements) != 5 || len(result.Dynamic) != 1 || len(result.Invocations) != 1 {
+	if len(result.Requirements) != 5 || len(result.Dynamic) != 0 || len(result.Invocations) != 1 {
 		t.Fatalf("kernel requirements = %+v", result)
-	}
-	if result.Dynamic[0].Reason != "linux-info.eclass check dispatch requires runtime phase evaluation" {
-		t.Fatalf("linux-info evidence = %+v", result.Dynamic)
 	}
 	bySymbol := make(map[string]KernelConfigRequirement)
 	for _, requirement := range result.Requirements {
@@ -57,6 +54,63 @@ pkg_setup() {
 		!reflect.DeepEqual(bySymbol["PREEMPT"].Conditions, []UseCondition{{Flag: "minimal", Enabled: false}}) ||
 		bySymbol["PREEMPT"].Function != "pkg_setup" || result.Invocations[0].Function != "pkg_setup" {
 		t.Fatalf("structured evidence = %+v", result)
+	}
+}
+
+func TestReadKernelRequirementsParsesMultilineAndLocalAssignments(t *testing.T) {
+	candidate, repositories := kernelRequirementFixture(t, `inherit linux-info
+pkg_setup() {
+	local CONFIG_CHECK="
+		~TIMERFD
+		~EVENTFD
+	"
+	CONFIG_CHECK+=" ~CRYPTO_USER_API"
+	linux-info_pkg_setup
+}
+`)
+	candidate.Inherited = []string{"linux-info"}
+	result, err := ReadKernelRequirements(context.Background(), candidate, repositories, KernelRequirementOptions{Integrity: RequireComplete})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Requirements) != 3 || len(result.Dynamic) != 0 || len(result.Invocations) != 1 {
+		t.Fatalf("multiline kernel requirements = %+v", result)
+	}
+	if result.Requirements[1].Source.Line != 3 || result.Requirements[2].Source.Line != 3 || result.Invocations[0].Source.Line != 8 {
+		t.Fatalf("multiline provenance = %+v, %+v", result.Requirements, result.Invocations)
+	}
+}
+
+func TestEvaluateKernelRequirementsClassifiesInactiveDynamicEvidence(t *testing.T) {
+	candidate, repositories := kernelRequirementFixture(t, `inherit linux-info
+pkg_setup() {
+	if use test ; then
+		CONFIG_CHECK="${DYNAMIC_CHECKS}"
+	fi
+	CONFIG_CHECK="~SYSVIPC"
+	linux-info_pkg_setup
+}
+`)
+	candidate.Inherited = []string{"linux-info"}
+	result, err := EvaluateKernelRequirements(context.Background(), candidate, repositories, KernelRequirementContext{
+		Phase: "pkg_setup", EffectiveUSE: []string{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Complete || len(result.Unresolved) != 1 || result.Unresolved[0].Applicability != Inapplicable || result.Unresolved[0].Blocking {
+		t.Fatalf("inactive dynamic evidence = %+v", result)
+	}
+	if len(result.Requirements) != 1 || result.Requirements[0].Symbol != "SYSVIPC" || result.Requirements[0].Applicability != Applicable {
+		t.Fatalf("evaluated requirements = %+v", result.Requirements)
+	}
+
+	unknown, err := EvaluateKernelRequirements(context.Background(), candidate, repositories, KernelRequirementContext{Phase: "pkg_setup"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unknown.Complete || unknown.Unresolved[0].Applicability != Indeterminate || !unknown.Unresolved[0].Blocking {
+		t.Fatalf("indeterminate dynamic evidence = %+v", unknown)
 	}
 }
 

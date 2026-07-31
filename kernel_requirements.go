@@ -140,15 +140,6 @@ func ReadKernelRequirements(ctx context.Context, candidate RepositoryCandidate, 
 			return KernelRequirementSet{}, err
 		}
 	}
-	if containsString(candidate.Inherited, "linux-info") &&
-		(len(result.Requirements) != 0 || len(result.Dynamic) != 0 || len(result.Invocations) != 0) {
-		result.Dynamic = append(result.Dynamic, DynamicKernelEvidence{
-			Expression: "inherit linux-info",
-			Reason:     "linux-info.eclass check dispatch requires runtime phase evaluation",
-			Source:     PolicySource{Path: ebuild},
-			Origin:     "eclass:linux-info",
-		})
-	}
 	sortKernelRequirementSet(&result)
 	if options.Integrity == RequireComplete && len(result.Dynamic) != 0 {
 		issues := make([]Issue, 0, len(result.Dynamic))
@@ -217,7 +208,15 @@ func readKernelRequirementSource(ctx context.Context, path, origin string, resul
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		startLine := lineNumber
 		raw := scanner.Text()
+		for strings.Contains(raw, "CONFIG_CHECK") && shellQuoteOpen(raw) {
+			if !scanner.Scan() {
+				break
+			}
+			lineNumber++
+			raw += "\n" + scanner.Text()
+		}
 		line := strings.TrimSpace(raw)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
@@ -282,8 +281,8 @@ func readKernelRequirementSource(ctx context.Context, path, origin string, resul
 			lineConditions = append(lineConditions, UseCondition{Flag: match[2], Enabled: match[1] == ""})
 			line = strings.TrimSpace(match[3])
 		}
-		source := PolicySource{Path: path, Line: lineNumber}
-		if strings.Contains(line, "check_extra_config") {
+		source := PolicySource{Path: path, Line: startLine}
+		if strings.Contains(line, "check_extra_config") || strings.Contains(line, "linux-info_pkg_setup") {
 			result.Invocations = append(result.Invocations, KernelCheckInvocation{
 				Function: function, Conditions: cloneUseConditions(lineConditions), Source: source, Origin: origin,
 			})
@@ -330,6 +329,29 @@ func readKernelRequirementSource(ctx context.Context, path, origin string, resul
 		return fmt.Errorf("read kernel requirement source %q: %w", path, err)
 	}
 	return nil
+}
+
+func shellQuoteOpen(value string) bool {
+	var quote rune
+	escaped := false
+	for _, current := range value {
+		if escaped {
+			escaped = false
+			continue
+		}
+		if current == '\\' && quote != '\'' {
+			escaped = true
+			continue
+		}
+		if quote == 0 && (current == '\'' || current == '"') {
+			quote = current
+			continue
+		}
+		if current == quote {
+			quote = 0
+		}
+	}
+	return quote != 0
 }
 
 func parseKernelRequirementToken(token string, source PolicySource, origin, function string, conditions []UseCondition) (KernelConfigRequirement, bool) {
