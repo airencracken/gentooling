@@ -177,6 +177,22 @@ func TestKernelConsumerPublicContracts(t *testing.T) {
 	if requirement.Symbol != "MODULES" || !requirement.Conditions[0].Enabled {
 		t.Fatalf("kernel requirement contract = %+v", requirement)
 	}
+	evaluation := gentooling.KernelRequirementContext{
+		Phase: "pkg_setup", KernelRelease: "7.1.5", Architecture: "amd64",
+		MergeType: gentooling.MergeSource, EffectiveUSE: []string{"modules"},
+	}
+	evaluated := gentooling.EvaluatedKernelRequirements{
+		Complete: true,
+		Requirements: []gentooling.EvaluatedKernelRequirement{{
+			Symbol: "MODULES", Applicability: gentooling.Applicable,
+		}},
+		Unresolved: []gentooling.UnresolvedKernelRequirement{{
+			Applicability: gentooling.Inapplicable, Severity: gentooling.KernelRequirementWarning,
+		}},
+	}
+	if evaluation.KernelRelease != "7.1.5" || !evaluated.Complete || evaluated.Requirements[0].Applicability != gentooling.Applicable {
+		t.Fatalf("evaluated kernel requirement contract = %+v, %+v", evaluation, evaluated)
+	}
 	module := gentooling.InstalledKernelModulePackage{
 		Package: gentooling.PackageID{Category: "sys-fs", Name: "zfs-kmod", Version: "2.3"},
 		Rebuild: gentooling.KernelModuleTargetMissing, NeedsRebuild: true,
@@ -186,11 +202,5 @@ func TestKernelConsumerPublicContracts(t *testing.T) {
 	}
 	if !errors.Is(gentooling.ErrCandidateNotFound, gentooling.ErrCandidateNotFound) {
 		t.Fatal("candidate error contract changed")
-	}
-	evaluated := gentooling.EvaluatedKernelRequirements{Complete: true, Requirements: []gentooling.EvaluatedKernelRequirement{{
-		Symbol: "MODULES", Applicability: gentooling.Applicable,
-	}}}
-	if !evaluated.Complete || evaluated.Requirements[0].Applicability != gentooling.Applicable {
-		t.Fatalf("evaluated kernel contract = %+v", evaluated)
 	}
 }

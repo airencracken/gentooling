@@ -46,6 +46,7 @@ type EvaluatedKernelRequirement struct {
 type UnresolvedKernelRequirement struct {
 	Applicability Applicability
 	Blocking      bool
+	Severity      KernelRequirementSeverity
 	Category      string
 	OperatorText  string
 	DeveloperText string
@@ -81,34 +82,45 @@ func EvaluateKernelRequirements(ctx context.Context, candidate RepositoryCandida
 	}
 	result := EvaluatedKernelRequirements{Package: set.Package, Complete: true}
 	for _, requirement := range set.Requirements {
-		applicability := kernelEvidenceApplicability(requirement.Conditions, requirement.ConditionExpression, use, useKnown, evaluation.KernelRelease)
-		invocation := invocationFor(requirement.Function, requirement.Source, set.Invocations, set.Calls, evaluation.Phase)
-		if requirement.Function != "" && invocation.Function == "" {
-			applicability = Inapplicable
+		base := kernelEvidenceApplicability(requirement.Conditions, requirement.ConditionExpression, use, useKnown, evaluation.KernelRelease)
+		invocations := invocationsFor(requirement.Function, requirement.Source, set.Invocations, set.Calls, evaluation.Phase)
+		if len(invocations) == 0 {
+			invocations = []KernelCheckInvocation{{}}
 		}
-		result.Requirements = append(result.Requirements, EvaluatedKernelRequirement{
-			Symbol: requirement.Symbol, Expectation: requirement.Expectation, Severity: requirement.Severity,
-			Applicability: applicability, Conditions: cloneUseConditions(requirement.Conditions),
-			Invocation: invocation, Source: requirement.Source, Origin: requirement.Origin,
-			AssignmentOperator: requirement.AssignmentOperator,
-		})
+		for _, invocation := range invocations {
+			applicability := combineApplicability(base, invocationApplicability(invocation, use, useKnown, evaluation.KernelRelease))
+			if invocation.Function == "" {
+				applicability = Inapplicable
+			}
+			result.Requirements = append(result.Requirements, EvaluatedKernelRequirement{
+				Symbol: requirement.Symbol, Expectation: requirement.Expectation, Severity: requirement.Severity,
+				Applicability: applicability, Conditions: cloneUseConditions(requirement.Conditions), Invocation: invocation,
+				Source: requirement.Source, Origin: requirement.Origin, AssignmentOperator: requirement.AssignmentOperator,
+			})
+		}
 	}
-	applyRequirementAssignmentFlow(result.Requirements, evaluation.Phase)
+	applyRequirementAssignmentFlow(result.Requirements)
 	for _, dynamic := range set.Dynamic {
-		applicability := kernelEvidenceApplicability(dynamic.Conditions, dynamic.ConditionExpression, use, useKnown, evaluation.KernelRelease)
-		invocation := invocationFor(dynamic.Function, dynamic.Source, set.Invocations, set.Calls, evaluation.Phase)
-		if dynamic.Function != "" && invocation.Function == "" {
-			applicability = Inapplicable
+		base := kernelEvidenceApplicability(dynamic.Conditions, dynamic.ConditionExpression, use, useKnown, evaluation.KernelRelease)
+		invocations := invocationsFor(dynamic.Function, dynamic.Source, set.Invocations, set.Calls, evaluation.Phase)
+		if len(invocations) == 0 {
+			invocations = []KernelCheckInvocation{{}}
 		}
-		blocking := applicability != Inapplicable
-		result.Unresolved = append(result.Unresolved, UnresolvedKernelRequirement{
-			Applicability: applicability, Blocking: blocking, Category: "dynamic-shell",
-			OperatorText: dynamic.Reason, DeveloperText: dynamic.Expression,
-			Conditions: cloneUseConditions(dynamic.Conditions), Invocation: invocation,
-			Source: dynamic.Source, Origin: dynamic.Origin,
-		})
-		if blocking {
-			result.Complete = false
+		for _, invocation := range invocations {
+			applicability := combineApplicability(base, invocationApplicability(invocation, use, useKnown, evaluation.KernelRelease))
+			if invocation.Function == "" {
+				applicability = Inapplicable
+			}
+			blocking := applicability != Inapplicable && dynamic.Severity == KernelRequirementFatal
+			result.Unresolved = append(result.Unresolved, UnresolvedKernelRequirement{
+				Applicability: applicability, Blocking: blocking, Severity: dynamic.Severity, Category: "dynamic-shell",
+				OperatorText: dynamic.Reason, DeveloperText: dynamic.Expression,
+				Conditions: cloneUseConditions(dynamic.Conditions), Invocation: invocation,
+				Source: dynamic.Source, Origin: dynamic.Origin,
+			})
+			if blocking {
+				result.Complete = false
+			}
 		}
 	}
 	sort.SliceStable(result.Unresolved, func(i, j int) bool {
@@ -120,49 +132,49 @@ func EvaluateKernelRequirements(ctx context.Context, candidate RepositoryCandida
 	return result, nil
 }
 
-func applyRequirementAssignmentFlow(requirements []EvaluatedKernelRequirement, phase string) {
-	indices := make([]int, 0, len(requirements))
+func applyRequirementAssignmentFlow(requirements []EvaluatedKernelRequirement) {
+	groups := make(map[string][]int)
 	for index, requirement := range requirements {
 		if requirement.Applicability != Applicable {
 			continue
 		}
-		if requirement.Invocation.Function != "" && phase != "" && requirement.Invocation.Function != phase &&
-			!strings.HasSuffix(requirement.Invocation.Function, "_"+phase) {
-			continue
-		}
-		indices = append(indices, index)
+		key := fmt.Sprintf("%s:%d:%s", requirement.Invocation.Source.Path, requirement.Invocation.Source.Line, requirement.Invocation.Function)
+		groups[key] = append(groups[key], index)
 	}
-	sort.SliceStable(indices, func(i, j int) bool {
-		left, right := requirements[indices[i]], requirements[indices[j]]
-		if left.Source.Path != right.Source.Path {
-			return left.Source.Path < right.Source.Path
-		}
-		return left.Source.Line < right.Source.Line
-	})
-	active := make([]int, 0, len(indices))
-	lastResetPath, lastResetLine := "", -1
-	for _, index := range indices {
-		requirement := requirements[index]
-		if requirement.AssignmentOperator == "=" && (requirement.Source.Path != lastResetPath || requirement.Source.Line != lastResetLine) {
-			for _, previous := range active {
-				requirements[previous].Applicability = Inapplicable
+	for _, indices := range groups {
+		sort.SliceStable(indices, func(i, j int) bool {
+			left, right := requirements[indices[i]], requirements[indices[j]]
+			if left.Source.Path != right.Source.Path {
+				return left.Source.Path < right.Source.Path
 			}
-			active = active[:0]
-			lastResetPath, lastResetLine = requirement.Source.Path, requirement.Source.Line
+			return left.Source.Line < right.Source.Line
+		})
+		active := make([]int, 0, len(indices))
+		lastResetPath, lastResetLine := "", -1
+		for _, index := range indices {
+			requirement := requirements[index]
+			if requirement.AssignmentOperator == "=" && (requirement.Source.Path != lastResetPath || requirement.Source.Line != lastResetLine) {
+				for _, previous := range active {
+					requirements[previous].Applicability = Inapplicable
+				}
+				active = active[:0]
+				lastResetPath, lastResetLine = requirement.Source.Path, requirement.Source.Line
+			}
+			active = append(active, index)
 		}
-		active = append(active, index)
 	}
 }
 
 func kernelEvidenceApplicability(conditions []UseCondition, expression string, enabled map[string]bool, known bool, kernelRelease string) Applicability {
+	legacy := conditionsApplicability(conditions, enabled, known)
 	if expression != "" {
 		node, err := parseUseConditionExpression(expression)
 		if err != nil {
 			return Indeterminate
 		}
-		return node.evaluate(conditionEvaluation{use: enabled, useKnown: known, kernelRelease: kernelRelease})
+		return combineApplicability(legacy, node.evaluate(conditionEvaluation{use: enabled, useKnown: known, kernelRelease: kernelRelease}))
 	}
-	return conditionsApplicability(conditions, enabled, known)
+	return legacy
 }
 
 func conditionsApplicability(conditions []UseCondition, enabled map[string]bool, known bool) Applicability {
@@ -177,7 +189,8 @@ func conditionsApplicability(conditions []UseCondition, enabled map[string]bool,
 	return Applicable
 }
 
-func invocationFor(function string, source PolicySource, invocations []KernelCheckInvocation, calls []KernelFunctionCall, phase string) KernelCheckInvocation {
+func invocationsFor(function string, source PolicySource, invocations []KernelCheckInvocation, calls []KernelFunctionCall, phase string) []KernelCheckInvocation {
+	var matched []KernelCheckInvocation
 	for _, invocation := range invocations {
 		if function != "" && invocation.Function != function {
 			continue
@@ -189,9 +202,26 @@ func invocationFor(function string, source PolicySource, invocations []KernelChe
 			invocation.Function != phase && !strings.HasSuffix(invocation.Function, "_"+phase) {
 			continue
 		}
-		return invocation
+		matched = append(matched, invocation)
 	}
-	return KernelCheckInvocation{}
+	return matched
+}
+
+func invocationApplicability(invocation KernelCheckInvocation, enabled map[string]bool, known bool, kernelRelease string) Applicability {
+	if invocation.Function == "" {
+		return Inapplicable
+	}
+	return kernelEvidenceApplicability(invocation.Conditions, invocation.ConditionExpression, enabled, known, kernelRelease)
+}
+
+func combineApplicability(left, right Applicability) Applicability {
+	if left == Inapplicable || right == Inapplicable {
+		return Inapplicable
+	}
+	if left == Indeterminate || right == Indeterminate {
+		return Indeterminate
+	}
+	return Applicable
 }
 
 func kernelFunctionReachable(from, target string, calls []KernelFunctionCall) bool {

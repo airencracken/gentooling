@@ -17,6 +17,12 @@ candidateInventory, err := gentooling.ReadRepositoryCandidates(ctx, repositories
 kernelRequirements, err := gentooling.ReadKernelRequirements(ctx,
     candidateInventory.Candidates[0], repositories,
     gentooling.KernelRequirementOptions{Integrity: gentooling.AllowPartial})
+evaluatedKernelRequirements, err := gentooling.EvaluateKernelRequirements(ctx,
+    candidateInventory.Candidates[0], repositories,
+    gentooling.KernelRequirementContext{
+        Phase: "pkg_setup", KernelRelease: "6.12.31",
+        EffectiveUSE: []string{"ssl"},
+    })
 modules, err := gentooling.ReadInstalledKernelModules(ctx, paths,
     gentooling.InstalledKernelModuleOptions{
         Integrity: gentooling.RequireComplete,
@@ -106,15 +112,16 @@ effective USE, declared IUSE, EAPI, and dependency metadata. Consumers can
 validate installed state without combining it with newer repository
 constraints.
 
-Kernel requirement discovery never sources an ebuild or eclass. It structures
-literal `CONFIG_CHECK` symbols, warning/fatal behavior, required-disabled
-symbols, USE conditions, source provenance, and `check_extra_config`
-invocations. Expressions that require shell evaluation remain explicit
-`DynamicKernelEvidence`. `RequireComplete` rejects those unresolved expressions;
-`AllowPartial` returns the useful static subset and diagnostics. Consumers must
-not treat absence of static requirements as proof that runtime policy is empty.
-The runtime dispatch performed by `linux-info.eclass` is itself retained as
-dynamic evidence, even when every discovered symbol is literal.
+Kernel requirement discovery and evaluation never source an ebuild or eclass.
+The evaluated API follows bounded static wrapper calls and computes variable
+state at each `linux-info_pkg_setup` or `check_extra_config` invocation. It
+supports multiline and local assignments, replacement and append flow, boolean
+USE branches, explicit target-kernel predicates, and demonstrably static arrays
+and loops. Unsupported active shell behavior remains explicit unresolved
+evidence; inactive branches and warning-only uncertainty do not block a
+complete active-path result. Merely inheriting `linux-info` is not unresolved
+evidence. No running-kernel, current-directory, or implicit Portage state is
+consulted.
 
 Installed kernel-module inventory combines VDB `INHERITED` metadata with owned
 out-of-tree `.ko` artifacts. The target kernel release is explicit and is

@@ -25,6 +25,14 @@ type conditionKernel struct {
 	operator string
 	version  []int
 }
+type conditionKernelConfigExists struct{}
+
+func (conditionKernelConfigExists) evaluate(evaluation conditionEvaluation) Applicability {
+	if evaluation.kernelRelease == "" {
+		return Indeterminate
+	}
+	return Applicable
+}
 
 func (node conditionUse) evaluate(evaluation conditionEvaluation) Applicability {
 	if !evaluation.useKnown {
@@ -194,6 +202,9 @@ func (parser *conditionParser) parseUnary() (conditionNode, error) {
 			return nil, fmt.Errorf("%w: kernel_is requires one to four version components", ErrInvalidData)
 		}
 		return conditionKernel{operator: operator, version: version}, nil
+	}
+	if parser.accept("linux_config_exists") {
+		return conditionKernelConfigExists{}, nil
 	}
 	if !parser.accept("use") || parser.index >= len(parser.tokens) {
 		return nil, fmt.Errorf("%w: expected bounded 'use FLAG' condition", ErrInvalidData)

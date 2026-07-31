@@ -53,6 +53,7 @@ type DynamicKernelEvidence struct {
 	Function            string
 	Source              PolicySource
 	Origin              string
+	Severity            KernelRequirementSeverity
 }
 
 type KernelCheckInvocation struct {
@@ -155,6 +156,11 @@ func ReadKernelRequirements(ctx context.Context, candidate RepositoryCandidate, 
 			return KernelRequirementSet{}, err
 		}
 	}
+	if containsString(candidate.Inherited, "linux-info") && len(result.Invocations) == 0 && (len(result.Requirements) != 0 || len(result.Dynamic) != 0) {
+		result.Invocations = append(result.Invocations, KernelCheckInvocation{
+			Function: "pkg_setup", Source: PolicySource{Path: ebuild}, Origin: "eclass:linux-info",
+		})
+	}
 	sortKernelRequirementSet(&result)
 	if options.Integrity == RequireComplete && len(result.Dynamic) != 0 {
 		issues := make([]Issue, 0, len(result.Dynamic))
@@ -240,14 +246,6 @@ func readKernelRequirementSource(ctx context.Context, path, origin string, resul
 		if match := kernelArrayPattern.FindStringSubmatch(line); len(match) != 0 {
 			if array, ok := parseStaticKernelArray(match[2]); ok {
 				staticArrays[match[1]] = array
-			} else {
-				result.Dynamic = append(result.Dynamic, DynamicKernelEvidence{
-					Expression: line,
-					Reason:     "kernel requirement array requires shell evaluation",
-					Function:   function,
-					Source:     PolicySource{Path: path, Line: startLine},
-					Origin:     origin,
-				})
 			}
 			continue
 		}
@@ -376,6 +374,7 @@ func readKernelRequirementSource(ctx context.Context, path, origin string, resul
 				Expression: strings.TrimSpace(raw), Reason: "CONFIG_CHECK value contains a dynamic shell expression",
 				Conditions: cloneUseConditions(lineConditions), ConditionExpression: conditionExpression, Function: function, Source: source, Origin: origin,
 				AssignmentOperator: assignmentOperator,
+				Severity:           dynamicKernelSeverity(expandedValues),
 			})
 			continue
 		}
@@ -389,6 +388,7 @@ func readKernelRequirementSource(ctx context.Context, path, origin string, resul
 						Expression: token, Reason: "CONFIG_CHECK token is not a static Kconfig symbol",
 						Conditions: cloneUseConditions(lineConditions), ConditionExpression: conditionExpression, Function: function, Source: source, Origin: origin,
 						AssignmentOperator: assignmentOperator,
+						Severity:           dynamicKernelSeverity([]string{token}),
 					})
 					continue
 				}
@@ -400,6 +400,20 @@ func readKernelRequirementSource(ctx context.Context, path, origin string, resul
 		return fmt.Errorf("read kernel requirement source %q: %w", path, err)
 	}
 	return nil
+}
+
+func dynamicKernelSeverity(values []string) KernelRequirementSeverity {
+	if len(values) == 0 {
+		return KernelRequirementFatal
+	}
+	for _, value := range values {
+		for _, token := range strings.Fields(value) {
+			if !strings.HasPrefix(token, "~") {
+				return KernelRequirementFatal
+			}
+		}
+	}
+	return KernelRequirementWarning
 }
 
 var kernelFunctionCallPattern = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_]*)\s*(?:$|(?:[^=].*)$)`)

@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.10.0
+
+- Adds bounded, phase-aware kernel requirement evaluation at actual
+  `linux-info_pkg_setup` and `check_extra_config` invocations.
+- Evaluates active and inactive USE branches, boolean USE expressions,
+  assignment replacement and append flow, and explicit target-kernel version
+  predicates without executing Bash.
+- Supports quoted multiline and local `CONFIG_CHECK` assignments, static
+  wrapper dispatch, and bounded literal arrays and loops.
+- Separates operator explanations from developer evidence and classifies
+  inactive and warning-only uncertainty as nonblocking.
+- Removes synthetic unresolved findings caused solely by inheriting
+  `linux-info`.
+
 ## v0.9.1
 
 - Adds installed `REQUIRED_USE` to `InstalledPackage` using the same optional,

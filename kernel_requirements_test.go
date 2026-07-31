@@ -3,6 +3,7 @@ package gentooling
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -366,5 +367,74 @@ func TestEvaluateKernelRequirementsInvocationSnapshot(t *testing.T) {
 	}
 	if got["TIMERFD"] != Applicable || got["EVENTFD"] != Inapplicable {
 		t.Fatalf("invocation snapshot = %+v", result)
+	}
+}
+
+func TestEvaluateKernelRequirementsKeepsIndependentInvocationStates(t *testing.T) {
+	candidate, repositories := kernelRequirementFixture(t, `pkg_setup() {
+	CONFIG_CHECK="~FIRST"
+	check_extra_config
+	CONFIG_CHECK="~SECOND"
+	check_extra_config
+}
+`)
+	result, err := EvaluateKernelRequirements(context.Background(), candidate, repositories, KernelRequirementContext{Phase: "pkg_setup", EffectiveUSE: []string{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	states := make(map[string]Applicability)
+	for _, requirement := range result.Requirements {
+		key := fmt.Sprintf("%s@%d", requirement.Symbol, requirement.Invocation.Source.Line)
+		states[key] = requirement.Applicability
+	}
+	want := map[string]Applicability{"FIRST@3": Applicable, "FIRST@5": Inapplicable, "SECOND@5": Applicable}
+	if !reflect.DeepEqual(states, want) {
+		t.Fatalf("invocation states = %#v, want %#v; result = %+v", states, want, result)
+	}
+}
+
+func TestEvaluateKernelRequirementsCombinesInvocationConditions(t *testing.T) {
+	candidate, repositories := kernelRequirementFixture(t, `pkg_setup() {
+	CONFIG_CHECK="~KTLS"
+	if use ktls; then
+		check_extra_config
+	fi
+}
+`)
+	result, err := EvaluateKernelRequirements(context.Background(), candidate, repositories, KernelRequirementContext{Phase: "pkg_setup", EffectiveUSE: []string{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Requirements) != 1 || result.Requirements[0].Applicability != Inapplicable {
+		t.Fatalf("conditional invocation = %+v", result)
+	}
+}
+
+func TestEvaluateKernelRequirementsWarningOnlyUnknownIsNonblocking(t *testing.T) {
+	candidate, repositories := kernelRequirementFixture(t, `pkg_setup() {
+	CONFIG_CHECK="~${OPTIONAL_CHECK}"
+	check_extra_config
+}
+`)
+	result, err := EvaluateKernelRequirements(context.Background(), candidate, repositories, KernelRequirementContext{Phase: "pkg_setup", EffectiveUSE: []string{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Complete || len(result.Unresolved) != 1 || result.Unresolved[0].Severity != KernelRequirementWarning || result.Unresolved[0].Blocking {
+		t.Fatalf("warning-only unknown = %+v", result)
+	}
+}
+
+func TestEvaluateKernelRequirementsUsesLinuxInfoDefaultPhaseDispatch(t *testing.T) {
+	candidate, repositories := kernelRequirementFixture(t, `inherit linux-info
+CONFIG_CHECK="~TIMERFD ~EVENTFD"
+`)
+	candidate.Inherited = []string{"linux-info"}
+	result, err := EvaluateKernelRequirements(context.Background(), candidate, repositories, KernelRequirementContext{Phase: "pkg_setup", EffectiveUSE: []string{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Requirements) != 2 || result.Requirements[0].Applicability != Applicable || result.Requirements[0].Invocation.Origin != "eclass:linux-info" {
+		t.Fatalf("linux-info default dispatch = %+v", result)
 	}
 }
