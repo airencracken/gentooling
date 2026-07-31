@@ -151,3 +151,15 @@ func TestRepositoryDiscoveryAndLocklessSnapshotPublicContract(t *testing.T) {
 		t.Fatalf("lockless snapshot cancellation = %v", err)
 	}
 }
+
+func TestRepositoryCandidatePublicContract(t *testing.T) {
+	candidate := gentooling.RepositoryCandidate{
+		ID:          gentooling.PackageID{Category: "sys-kernel", Name: "gentoo-sources", Version: "6.12", Repository: "gentoo"},
+		EAPI:        "8",
+		Keywords:    []string{"amd64"},
+		DeclaredUse: []gentooling.UseDeclaration{{Name: "experimental", Default: gentooling.UseDefaultDisabled}},
+	}
+	if candidate.ID.Repository != "gentoo" || candidate.DeclaredUse[0].String() != "-experimental" {
+		t.Fatalf("public candidate contract = %+v", candidate)
+	}
+}

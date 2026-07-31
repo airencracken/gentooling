@@ -12,6 +12,8 @@ diagnostics remain deterministic.
 ```go
 paths := gentooling.DefaultSystemPaths("/")
 repositories, err := gentooling.ReadRepositories(ctx, paths)
+candidateInventory, err := gentooling.ReadRepositoryCandidates(ctx, repositories,
+    gentooling.CandidateOptions{Integrity: gentooling.RequireComplete})
 inventory, err := gentooling.ReadInstalled(ctx, paths, gentooling.InstalledOptions{
     Integrity: gentooling.RequireComplete,
 })
@@ -77,6 +79,17 @@ repos.conf; Gentooling rebases them beneath `SystemPaths.Root` and never
 consults the corresponding host paths. Repositories are returned
 master-before-child and are included in effective configuration and combined
 snapshots.
+
+Repository candidate discovery reads Portage's evaluated `metadata/md5-cache`
+rather than executing ebuild shell code. It exposes version, repository,
+slot/subslot, EAPI, KEYWORDS, structured IUSE defaults, and dependency
+metadata. Scans are bounded, deterministic, symlink-safe, and report malformed,
+unreadable, or concurrently changing evidence through the same partial and
+strict integrity model as installed-package inventory.
+
+Canonical multiline assignments in `make.globals` and `make.conf`, including
+quoted `FEATURES` blocks and backslash continuations, retain the source line of
+the assignment and reject incomplete input.
 
 `LockedAndStabilized` is the default snapshot guarantee. Unprivileged
 inspection may explicitly request `StabilizedLockless`; Gentooling records that

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -55,6 +56,50 @@ func TestReadEffectiveConfigPreservesLayersExpansionAndProvenance(t *testing.T) 
 		filepath.Base(got.UserPackageUse[0].Source.Path) != "10-base" ||
 		filepath.Base(got.UserPackageUse[1].Source.Path) != "20-local" {
 		t.Fatalf("package.use ordering/provenance = %+v", got.UserPackageUse)
+	}
+}
+
+func TestReadEffectiveConfigAcceptsCanonicalMultilineGlobals(t *testing.T) {
+	paths := effectiveConfigFixture(t)
+	writeProfileFile(t, filepath.Dir(paths.MakeGlobals), "make.globals", `FEATURES="
+        sandbox
+        userpriv
+        usersandbox
+"
+USE_EXPAND="PYTHON_TARGETS"
+ACCEPT_KEYWORDS="amd64 \
+~amd64"
+LINK_FLAGS="-O2 -pipe -fno-\
+plt"
+`)
+	got, err := ReadEffectiveConfig(context.Background(), paths, ConfigOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fields := strings.Fields(got.Variables["FEATURES"]); !reflect.DeepEqual(fields, []string{"sandbox", "userpriv", "usersandbox"}) {
+		t.Fatalf("FEATURES = %q (%v)", got.Variables["FEATURES"], fields)
+	}
+	if fields := strings.Fields(got.Variables["ACCEPT_KEYWORDS"]); !reflect.DeepEqual(fields, []string{"amd64", "~amd64"}) {
+		t.Fatalf("ACCEPT_KEYWORDS = %q (%v)", got.Variables["ACCEPT_KEYWORDS"], fields)
+	}
+	if got.Variables["LINK_FLAGS"] != "-O2 -pipe -fno-plt" {
+		t.Fatalf("LINK_FLAGS = %q", got.Variables["LINK_FLAGS"])
+	}
+}
+
+func TestReadEffectiveConfigRejectsUnterminatedMultilineAssignments(t *testing.T) {
+	for name, value := range map[string]string{
+		"quote":        "FEATURES=\"sandbox\n",
+		"continuation": "FEATURES=sandbox \\\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			paths := effectiveConfigFixture(t)
+			writeProfileFile(t, filepath.Dir(paths.MakeGlobals), "make.globals", value)
+			_, err := ReadEffectiveConfig(context.Background(), paths, ConfigOptions{})
+			if !errors.Is(err, ErrInvalidData) {
+				t.Fatalf("error = %v", err)
+			}
+		})
 	}
 }
 

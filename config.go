@@ -156,31 +156,121 @@ func readConfigAssignments(ctx context.Context, path string, required bool) ([]c
 	if err != nil {
 		return nil, fmt.Errorf("read configuration %q: %w", path, err)
 	}
+	logical, err := logicalConfigLines(string(data), path)
+	if err != nil {
+		return nil, err
+	}
 	var result []configValue
-	for index, raw := range strings.Split(string(data), "\n") {
+	for _, entry := range logical {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		line := strings.TrimSpace(strings.TrimSuffix(raw, "\r"))
+		line := strings.TrimSpace(entry.value)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
 		name, value, found := strings.Cut(line, "=")
 		if !found {
-			return nil, fmt.Errorf("%w: malformed assignment at %s:%d", ErrInvalidData, path, index+1)
+			return nil, fmt.Errorf("%w: malformed assignment at %s:%d", ErrInvalidData, path, entry.line)
 		}
 		name = strings.TrimSpace(strings.TrimPrefix(name, "export "))
 		if !validConfigName(name) {
-			return nil, fmt.Errorf("%w: invalid variable at %s:%d", ErrInvalidData, path, index+1)
+			return nil, fmt.Errorf("%w: invalid variable at %s:%d", ErrInvalidData, path, entry.line)
 		}
 		result = append(result, configValue{
 			name:   name,
 			value:  stripProfileQuotes(strings.TrimSpace(value)),
-			source: PolicySource{Path: path, Line: index + 1},
+			source: PolicySource{Path: path, Line: entry.line},
 			layer:  "global",
 		})
 	}
 	return result, nil
+}
+
+type logicalConfigLine struct {
+	value string
+	line  int
+}
+
+func logicalConfigLines(data, path string) ([]logicalConfigLine, error) {
+	var (
+		result []logicalConfigLine
+		buffer strings.Builder
+		start  int
+		quote  byte
+		joined bool
+	)
+	lines := strings.Split(data, "\n")
+	if len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	for index, raw := range lines {
+		raw = strings.TrimSuffix(raw, "\r")
+		if buffer.Len() == 0 {
+			if strings.TrimSpace(raw) == "" || strings.HasPrefix(strings.TrimSpace(raw), "#") {
+				continue
+			}
+			start = index + 1
+		} else if !joined {
+			buffer.WriteByte('\n')
+		}
+		joined = false
+		buffer.WriteString(raw)
+		var escaped bool
+		quote, escaped = configQuoteState(buffer.String())
+		if quote != 0 || escaped || configLineContinues(buffer.String()) {
+			if quote != '\'' && (escaped || configLineContinues(buffer.String())) {
+				current := strings.TrimRight(buffer.String(), " \t")
+				buffer.Reset()
+				buffer.WriteString(strings.TrimSuffix(current, "\\"))
+				joined = true
+			}
+			continue
+		}
+		result = append(result, logicalConfigLine{value: buffer.String(), line: start})
+		buffer.Reset()
+	}
+	if buffer.Len() != 0 {
+		if quote != 0 {
+			return nil, fmt.Errorf("%w: unterminated quote at %s:%d", ErrInvalidData, path, start)
+		}
+		return nil, fmt.Errorf("%w: unterminated continuation at %s:%d", ErrInvalidData, path, start)
+	}
+	return result, nil
+}
+
+func configQuoteState(value string) (byte, bool) {
+	var quote byte
+	escaped := false
+	for index := 0; index < len(value); index++ {
+		character := value[index]
+		if escaped {
+			escaped = false
+			continue
+		}
+		if character == '\\' && quote != '\'' {
+			escaped = true
+			continue
+		}
+		if quote == 0 && (character == '\'' || character == '"') {
+			quote = character
+		} else if character == quote {
+			quote = 0
+		}
+	}
+	return quote, escaped
+}
+
+func configLineContinues(value string) bool {
+	trimmed := strings.TrimRight(value, " \t")
+	if !strings.HasSuffix(trimmed, "\\") {
+		return false
+	}
+	backslashes := 0
+	for index := len(trimmed) - 1; index >= 0 && trimmed[index] == '\\'; index-- {
+		backslashes++
+	}
+	return backslashes%2 == 1
 }
 
 func mergeConfigValues(destination map[string]configValue, assignments []configValue) {

@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.8.0
+
+- Adds deterministic, bounded repository candidate discovery from Portage's
+  evaluated metadata cache.
+- Exposes candidate version, repository, slot/subslot, EAPI, KEYWORDS,
+  structured IUSE defaults, and dependency metadata without executing ebuild
+  shell code.
+- Applies strict and partial integrity handling to malformed, unreadable,
+  symlinked, and concurrently changing repository evidence.
+- Accepts Portage's canonical multiline configuration assignments, including
+  quoted `FEATURES` blocks and backslash continuations.
+- Rejects truncated multiline configuration while retaining assignment-start
+  provenance.
+
 ## v0.7.0
 
 - Adds root-aware repos.conf discovery with deterministic master-before-child
