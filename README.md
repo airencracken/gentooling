@@ -101,6 +101,11 @@ symlink-safe, and report malformed, unreadable, or concurrently changing
 evidence through the same partial and strict integrity model as
 installed-package inventory.
 
+Installed-package inventory preserves the VDB's `REQUIRED_USE` alongside its
+effective USE, declared IUSE, EAPI, and dependency metadata. Consumers can
+validate installed state without combining it with newer repository
+constraints.
+
 Kernel requirement discovery never sources an ebuild or eclass. It structures
 literal `CONFIG_CHECK` symbols, warning/fatal behavior, required-disabled
 symbols, USE conditions, source provenance, and `check_extra_config`

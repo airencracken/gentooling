@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.9.1
+
+- Adds installed `REQUIRED_USE` to `InstalledPackage` using the same optional,
+  symlink-safe, mutation-checked evidence contract as other VDB metadata.
+
 ## v0.9.0
 
 - Adds conservative structured Kconfig requirements from ebuild and inherited

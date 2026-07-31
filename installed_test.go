@@ -26,7 +26,8 @@ func writeInstalled(t testTB, root, cpv string, overrides map[string]string) str
 	files := map[string]string{
 		"CONTENTS": "obj /usr/bin/example digest 1\n", "EAPI": "8\n", "SLOT": "0/1\n",
 		"repository": "gentoo\n", "USE": "ssl test\n", "IUSE": "+ssl test\n",
-		"DEPEND": "dev-libs/a\n", "RDEPEND": "dev-libs/b\n", "BUILD_TIME": "1700000000\n", "COUNTER": "42\n",
+		"REQUIRED_USE": "ssl? ( !test )\n",
+		"DEPEND":       "dev-libs/a\n", "RDEPEND": "dev-libs/b\n", "BUILD_TIME": "1700000000\n", "COUNTER": "42\n",
 	}
 	for name, value := range overrides {
 		files[name] = value
@@ -56,6 +57,9 @@ func TestReadInstalledReturnsSortedOwnedInventory(t *testing.T) {
 	pkg := got.Packages[1]
 	if pkg.ID.Slot != "0" || pkg.ID.Subslot != "1" || pkg.ID.Repository != "gentoo" || pkg.Build.Time != 1700000000 || pkg.Build.Counter != 42 || pkg.Contents == "" {
 		t.Fatalf("metadata lost: %+v", pkg)
+	}
+	if pkg.RequiredUse != "ssl? ( !test )" {
+		t.Fatalf("installed REQUIRED_USE = %q", pkg.RequiredUse)
 	}
 	wantDeclarations := []UseDeclaration{
 		{Name: "ssl", Default: UseDefaultEnabled},

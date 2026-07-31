@@ -102,6 +102,7 @@ type BuildMetadata struct {
 type InstalledPackage struct {
 	ID           PackageID
 	EAPI         string
+	RequiredUse  string
 	EnabledUse   []string
 	DeclaredUse  []UseDeclaration
 	Inherited    []string
@@ -432,7 +433,7 @@ func readInstalledRecord(dir string, id PackageID, includeContents bool, afterRe
 	declared, declarationIssues := parseUseDeclarations(filepath.Join(dir, "IUSE"), id, optional("IUSE"))
 	issues = append(issues, declarationIssues...)
 	pkg := InstalledPackage{
-		ID: id, EAPI: values["EAPI"],
+		ID: id, EAPI: values["EAPI"], RequiredUse: optional("REQUIRED_USE"),
 		EnabledUse:  enabled,
 		DeclaredUse: declared,
 		Inherited:   strings.Fields(optional("INHERITED")),

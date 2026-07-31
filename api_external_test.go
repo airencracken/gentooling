@@ -26,6 +26,10 @@ func TestInstalledInventoryPublicContract(t *testing.T) {
 	if declaration.Name != "ssl" {
 		t.Fatalf("public declaration contract changed: %+v", declaration)
 	}
+	installed := gentooling.InstalledPackage{RequiredUse: "ssl? ( !test )"}
+	if installed.RequiredUse == "" {
+		t.Fatal("installed REQUIRED_USE is absent from the public contract")
+	}
 }
 
 func TestProfilePublicContract(t *testing.T) {
