@@ -90,6 +90,7 @@ pkg_setup() {
 	CONFIG_CHECK="~SYSVIPC"
 	linux-info_pkg_setup
 }
+
 `)
 	candidate.Inherited = []string{"linux-info"}
 	result, err := EvaluateKernelRequirements(context.Background(), candidate, repositories, KernelRequirementContext{
@@ -111,6 +112,73 @@ pkg_setup() {
 	}
 	if unknown.Complete || unknown.Unresolved[0].Applicability != Indeterminate || !unknown.Unresolved[0].Blocking {
 		t.Fatalf("indeterminate dynamic evidence = %+v", unknown)
+	}
+}
+
+func TestEvaluateKernelRequirementsBooleanIfElifElse(t *testing.T) {
+	candidate, repositories := kernelRequirementFixture(t, `pkg_setup() {
+	if use test || use pgo ; then
+		CONFIG_CHECK="~TEST_PATH"
+	elif use opencl || ( use vulkan && use video_cards_nvk ) ; then
+		CONFIG_CHECK="~GPU_PATH"
+	else
+		CONFIG_CHECK="~PLAIN_PATH"
+	fi
+	check_extra_config
+}
+
+`)
+	result, err := EvaluateKernelRequirements(context.Background(), candidate, repositories, KernelRequirementContext{
+		Phase: "pkg_setup", EffectiveUSE: []string{"vulkan", "video_cards_nvk"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	applicability := make(map[string]Applicability)
+	for _, requirement := range result.Requirements {
+		applicability[requirement.Symbol] = requirement.Applicability
+	}
+	if applicability["TEST_PATH"] != Inapplicable || applicability["GPU_PATH"] != Applicable || applicability["PLAIN_PATH"] != Inapplicable {
+		t.Fatalf("boolean branch applicability = %#v; result = %+v", applicability, result)
+	}
+}
+
+func TestEvaluateKernelRequirementsAssignmentReplacementAndAppend(t *testing.T) {
+	candidate, repositories := kernelRequirementFixture(t, `pkg_setup() {
+	CONFIG_CHECK="~INOTIFY_USER"
+	CONFIG_CHECK+=" ~TIMERFD"
+	if use test ; then
+		CONFIG_CHECK="~IPV6"
+		CONFIG_CHECK+=" ~KUNIT"
+	fi
+	linux-info_pkg_setup
+}
+`)
+	for _, test := range []struct {
+		name string
+		use  []string
+		want map[string]Applicability
+	}{
+		{name: "replacement", use: []string{"test"}, want: map[string]Applicability{
+			"INOTIFY_USER": Inapplicable, "TIMERFD": Inapplicable, "IPV6": Applicable, "KUNIT": Applicable,
+		}},
+		{name: "inactive replacement", use: []string{}, want: map[string]Applicability{
+			"INOTIFY_USER": Applicable, "TIMERFD": Applicable, "IPV6": Inapplicable, "KUNIT": Inapplicable,
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			result, err := EvaluateKernelRequirements(context.Background(), candidate, repositories, KernelRequirementContext{Phase: "pkg_setup", EffectiveUSE: test.use})
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := make(map[string]Applicability)
+			for _, requirement := range result.Requirements {
+				got[requirement.Symbol] = requirement.Applicability
+			}
+			if !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("assignment flow = %#v, want %#v", got, test.want)
+			}
+		})
 	}
 }
 

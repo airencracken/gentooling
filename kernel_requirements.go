@@ -33,29 +33,34 @@ type UseCondition struct {
 }
 
 type KernelConfigRequirement struct {
-	Symbol      string
-	Expectation KernelConfigExpectation
-	Severity    KernelRequirementSeverity
-	Conditions  []UseCondition
-	Function    string
-	Source      PolicySource
-	Origin      string
+	Symbol              string
+	Expectation         KernelConfigExpectation
+	Severity            KernelRequirementSeverity
+	Conditions          []UseCondition
+	ConditionExpression string
+	AssignmentOperator  string
+	Function            string
+	Source              PolicySource
+	Origin              string
 }
 
 type DynamicKernelEvidence struct {
-	Expression string
-	Reason     string
-	Conditions []UseCondition
-	Function   string
-	Source     PolicySource
-	Origin     string
+	Expression          string
+	Reason              string
+	Conditions          []UseCondition
+	ConditionExpression string
+	AssignmentOperator  string
+	Function            string
+	Source              PolicySource
+	Origin              string
 }
 
 type KernelCheckInvocation struct {
-	Function   string
-	Conditions []UseCondition
-	Source     PolicySource
-	Origin     string
+	Function            string
+	Conditions          []UseCondition
+	ConditionExpression string
+	Source              PolicySource
+	Origin              string
 }
 
 type KernelRequirementSet struct {
@@ -202,7 +207,7 @@ func readKernelRequirementSource(ctx context.Context, path, origin string, resul
 	lineNumber := 0
 	function := ""
 	var conditions []UseCondition
-	var controlStack []bool
+	var controlStack []kernelControlFrame
 	for scanner.Scan() {
 		lineNumber++
 		if err := ctx.Err(); err != nil {
@@ -235,34 +240,51 @@ func readKernelRequirementSource(ctx context.Context, path, origin string, resul
 		}
 		if match := kernelIfUsePattern.FindStringSubmatch(line); len(match) != 0 {
 			conditions = append(conditions, UseCondition{Flag: match[2], Enabled: match[1] == ""})
-			controlStack = append(controlStack, true)
+			expression := "use " + match[2]
+			if match[1] != "" {
+				expression = "! " + expression
+			}
+			controlStack = append(controlStack, kernelControlFrame{supported: true, expression: expression, prior: expression})
 			continue
 		}
 		if strings.HasPrefix(line, "if ") && strings.HasSuffix(line, "then") {
-			controlStack = append(controlStack, false)
+			expression := shellIfExpression(line, "if")
+			_, parseErr := parseUseConditionExpression(expression)
+			controlStack = append(controlStack, kernelControlFrame{supported: parseErr == nil, expression: expression, prior: expression})
 			continue
 		}
 		if strings.HasPrefix(line, "case ") && strings.HasSuffix(line, " in") ||
 			(strings.HasPrefix(line, "for ") || strings.HasPrefix(line, "while ") || strings.HasPrefix(line, "until ")) &&
 				strings.HasSuffix(line, " do") {
-			controlStack = append(controlStack, false)
+			controlStack = append(controlStack, kernelControlFrame{})
 			continue
 		}
 		if line == "else" {
-			if len(controlStack) != 0 && controlStack[len(controlStack)-1] && len(conditions) != 0 {
+			if len(controlStack) != 0 && controlStack[len(controlStack)-1].supported && len(conditions) != 0 {
 				conditions[len(conditions)-1].Enabled = !conditions[len(conditions)-1].Enabled
+			}
+			if len(controlStack) != 0 && controlStack[len(controlStack)-1].supported {
+				frame := &controlStack[len(controlStack)-1]
+				frame.expression = "! ( " + frame.prior + " )"
 			}
 			continue
 		}
 		if strings.HasPrefix(line, "elif ") {
-			if len(controlStack) != 0 && controlStack[len(controlStack)-1] && len(conditions) != 0 {
+			if len(controlStack) != 0 && controlStack[len(controlStack)-1].supported && len(conditions) != 0 {
 				conditions = conditions[:len(conditions)-1]
-				controlStack[len(controlStack)-1] = false
+			}
+			if len(controlStack) != 0 {
+				frame := &controlStack[len(controlStack)-1]
+				next := shellIfExpression(line, "elif")
+				_, parseErr := parseUseConditionExpression(next)
+				frame.expression = "! ( " + frame.prior + " ) && ( " + next + " )"
+				frame.prior = "( " + frame.prior + " ) || ( " + next + " )"
+				frame.supported = frame.supported && parseErr == nil
 			}
 			continue
 		}
 		if line == "fi" {
-			if len(controlStack) != 0 && controlStack[len(controlStack)-1] && len(conditions) != 0 {
+			if len(controlStack) != 0 && controlStack[len(controlStack)-1].supported && len(conditions) != 0 {
 				conditions = conditions[:len(conditions)-1]
 			}
 			if len(controlStack) != 0 {
@@ -277,6 +299,7 @@ func readKernelRequirementSource(ctx context.Context, path, origin string, resul
 			continue
 		}
 		lineConditions := append([]UseCondition(nil), conditions...)
+		conditionExpression := joinedControlExpression(controlStack)
 		if match := kernelUsePrefixPattern.FindStringSubmatch(line); len(match) != 0 {
 			lineConditions = append(lineConditions, UseCondition{Flag: match[2], Enabled: match[1] == ""})
 			line = strings.TrimSpace(match[3])
@@ -284,7 +307,7 @@ func readKernelRequirementSource(ctx context.Context, path, origin string, resul
 		source := PolicySource{Path: path, Line: startLine}
 		if strings.Contains(line, "check_extra_config") || strings.Contains(line, "linux-info_pkg_setup") {
 			result.Invocations = append(result.Invocations, KernelCheckInvocation{
-				Function: function, Conditions: cloneUseConditions(lineConditions), Source: source, Origin: origin,
+				Function: function, Conditions: cloneUseConditions(lineConditions), ConditionExpression: conditionExpression, Source: source, Origin: origin,
 			})
 		}
 		if !strings.Contains(line, "CONFIG_CHECK") {
@@ -298,27 +321,32 @@ func readKernelRequirementSource(ctx context.Context, path, origin string, resul
 			}
 			result.Dynamic = append(result.Dynamic, DynamicKernelEvidence{
 				Expression: strings.TrimSpace(raw), Reason: reason,
-				Conditions: cloneUseConditions(lineConditions), Function: function, Source: source, Origin: origin,
+				Conditions: cloneUseConditions(lineConditions), ConditionExpression: conditionExpression, Function: function, Source: source, Origin: origin,
 			})
 			continue
 		}
 		value := match[2]
+		assignmentOperator := match[1]
 		if value == "" {
 			value = match[3]
 		}
 		if strings.ContainsAny(value, "$`(){}") {
 			result.Dynamic = append(result.Dynamic, DynamicKernelEvidence{
 				Expression: strings.TrimSpace(raw), Reason: "CONFIG_CHECK value contains a dynamic shell expression",
-				Conditions: cloneUseConditions(lineConditions), Function: function, Source: source, Origin: origin,
+				Conditions: cloneUseConditions(lineConditions), ConditionExpression: conditionExpression, Function: function, Source: source, Origin: origin,
+				AssignmentOperator: assignmentOperator,
 			})
 			continue
 		}
 		for _, token := range strings.Fields(value) {
 			requirement, ok := parseKernelRequirementToken(token, source, origin, function, lineConditions)
+			requirement.ConditionExpression = conditionExpression
+			requirement.AssignmentOperator = assignmentOperator
 			if !ok {
 				result.Dynamic = append(result.Dynamic, DynamicKernelEvidence{
 					Expression: token, Reason: "CONFIG_CHECK token is not a static Kconfig symbol",
-					Conditions: cloneUseConditions(lineConditions), Function: function, Source: source, Origin: origin,
+					Conditions: cloneUseConditions(lineConditions), ConditionExpression: conditionExpression, Function: function, Source: source, Origin: origin,
+					AssignmentOperator: assignmentOperator,
 				})
 				continue
 			}
@@ -375,9 +403,32 @@ func parseKernelRequirementToken(token string, source PolicySource, origin, func
 	return requirement, true
 }
 
-func dynamicKernelControl(stack []bool) bool {
-	for _, supported := range stack {
-		if !supported {
+type kernelControlFrame struct {
+	supported  bool
+	expression string
+	prior      string
+}
+
+func shellIfExpression(line, keyword string) string {
+	value := strings.TrimSpace(strings.TrimPrefix(line, keyword))
+	value = strings.TrimSpace(strings.TrimSuffix(value, "then"))
+	value = strings.TrimSpace(strings.TrimSuffix(value, ";"))
+	return value
+}
+
+func joinedControlExpression(stack []kernelControlFrame) string {
+	var expressions []string
+	for _, frame := range stack {
+		if frame.supported && frame.expression != "" {
+			expressions = append(expressions, "( "+frame.expression+" )")
+		}
+	}
+	return strings.Join(expressions, " && ")
+}
+
+func dynamicKernelControl(stack []kernelControlFrame) bool {
+	for _, frame := range stack {
+		if !frame.supported {
 			return true
 		}
 	}

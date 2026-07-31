@@ -32,14 +32,15 @@ type KernelRequirementContext struct {
 }
 
 type EvaluatedKernelRequirement struct {
-	Symbol        string
-	Expectation   KernelConfigExpectation
-	Severity      KernelRequirementSeverity
-	Applicability Applicability
-	Conditions    []UseCondition
-	Invocation    KernelCheckInvocation
-	Source        PolicySource
-	Origin        string
+	Symbol             string
+	Expectation        KernelConfigExpectation
+	Severity           KernelRequirementSeverity
+	Applicability      Applicability
+	Conditions         []UseCondition
+	Invocation         KernelCheckInvocation
+	Source             PolicySource
+	Origin             string
+	AssignmentOperator string
 }
 
 type UnresolvedKernelRequirement struct {
@@ -80,7 +81,7 @@ func EvaluateKernelRequirements(ctx context.Context, candidate RepositoryCandida
 	}
 	result := EvaluatedKernelRequirements{Package: set.Package, Complete: true}
 	for _, requirement := range set.Requirements {
-		applicability := conditionsApplicability(requirement.Conditions, use, useKnown)
+		applicability := kernelEvidenceApplicability(requirement.Conditions, requirement.ConditionExpression, use, useKnown)
 		invocation := invocationFor(requirement.Function, set.Invocations, evaluation.Phase)
 		if requirement.Function != "" && invocation.Function == "" {
 			applicability = Inapplicable
@@ -89,10 +90,12 @@ func EvaluateKernelRequirements(ctx context.Context, candidate RepositoryCandida
 			Symbol: requirement.Symbol, Expectation: requirement.Expectation, Severity: requirement.Severity,
 			Applicability: applicability, Conditions: cloneUseConditions(requirement.Conditions),
 			Invocation: invocation, Source: requirement.Source, Origin: requirement.Origin,
+			AssignmentOperator: requirement.AssignmentOperator,
 		})
 	}
+	applyRequirementAssignmentFlow(result.Requirements, evaluation.Phase)
 	for _, dynamic := range set.Dynamic {
-		applicability := conditionsApplicability(dynamic.Conditions, use, useKnown)
+		applicability := kernelEvidenceApplicability(dynamic.Conditions, dynamic.ConditionExpression, use, useKnown)
 		invocation := invocationFor(dynamic.Function, set.Invocations, evaluation.Phase)
 		if dynamic.Function != "" && invocation.Function == "" {
 			applicability = Inapplicable
@@ -115,6 +118,51 @@ func EvaluateKernelRequirements(ctx context.Context, candidate RepositoryCandida
 		return result.Unresolved[i].Source.Line < result.Unresolved[j].Source.Line
 	})
 	return result, nil
+}
+
+func applyRequirementAssignmentFlow(requirements []EvaluatedKernelRequirement, phase string) {
+	indices := make([]int, 0, len(requirements))
+	for index, requirement := range requirements {
+		if requirement.Applicability != Applicable {
+			continue
+		}
+		if requirement.Invocation.Function != "" && phase != "" && requirement.Invocation.Function != phase &&
+			!strings.HasSuffix(requirement.Invocation.Function, "_"+phase) {
+			continue
+		}
+		indices = append(indices, index)
+	}
+	sort.SliceStable(indices, func(i, j int) bool {
+		left, right := requirements[indices[i]], requirements[indices[j]]
+		if left.Source.Path != right.Source.Path {
+			return left.Source.Path < right.Source.Path
+		}
+		return left.Source.Line < right.Source.Line
+	})
+	active := make([]int, 0, len(indices))
+	lastResetPath, lastResetLine := "", -1
+	for _, index := range indices {
+		requirement := requirements[index]
+		if requirement.AssignmentOperator == "=" && (requirement.Source.Path != lastResetPath || requirement.Source.Line != lastResetLine) {
+			for _, previous := range active {
+				requirements[previous].Applicability = Inapplicable
+			}
+			active = active[:0]
+			lastResetPath, lastResetLine = requirement.Source.Path, requirement.Source.Line
+		}
+		active = append(active, index)
+	}
+}
+
+func kernelEvidenceApplicability(conditions []UseCondition, expression string, enabled map[string]bool, known bool) Applicability {
+	if expression != "" {
+		node, err := parseUseConditionExpression(expression)
+		if err != nil {
+			return Indeterminate
+		}
+		return node.evaluate(enabled, known)
+	}
+	return conditionsApplicability(conditions, enabled, known)
 }
 
 func conditionsApplicability(conditions []UseCondition, enabled map[string]bool, known bool) Applicability {
