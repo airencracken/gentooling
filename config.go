@@ -115,7 +115,6 @@ func ReadEffectiveConfig(ctx context.Context, paths SystemPaths, options ConfigO
 	}
 	allAssignments = append(allAssignments, userAssignments...)
 	mergeConfigValues(values, userAssignments)
-	resolveConfigValues(values)
 
 	result := EffectiveConfig{Variables: make(map[string]string), Repositories: repositories, Profile: profile}
 	for name, value := range values {
@@ -280,32 +279,12 @@ func mergeConfigValues(destination map[string]configValue, assignments []configV
 			if previous, exists := destination[match[1]]; exists {
 				return previous.value
 			}
-			return reference
+			return ""
 		})
 		if previous, exists := destination[assignment.name]; exists && incrementalConfigVariable(assignment.name) {
 			assignment.value = strings.TrimSpace(previous.value + " " + assignment.value)
 		}
 		destination[assignment.name] = assignment
-	}
-}
-
-func resolveConfigValues(values map[string]configValue) {
-	for pass := 0; pass < len(values)+1; pass++ {
-		changed := false
-		for name, entry := range values {
-			resolved := configReferencePattern.ReplaceAllStringFunc(entry.value, func(reference string) string {
-				match := configReferencePattern.FindStringSubmatch(reference)
-				return values[match[1]].value
-			})
-			if resolved != entry.value {
-				entry.value = resolved
-				values[name] = entry
-				changed = true
-			}
-		}
-		if !changed {
-			return
-		}
 	}
 }
 

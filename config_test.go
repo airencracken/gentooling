@@ -121,6 +121,22 @@ func TestReadEffectiveConfigDoesNotReadProcessEnvironment(t *testing.T) {
 	}
 }
 
+func TestReadEffectiveConfigExpandsAgainstPriorEnvironmentOnly(t *testing.T) {
+	paths := effectiveConfigFixture(t)
+	writeProfileFile(t, filepath.Dir(paths.MakeGlobals), "make.globals", `SELF="${SELF} first"
+FORWARD="${LATER} before"
+LATER="after"
+SELF="${SELF} second"
+`)
+	got, err := ReadEffectiveConfig(context.Background(), paths, ConfigOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Variables["SELF"] != " first second" || got.Variables["FORWARD"] != " before" {
+		t.Fatalf("shell-order expansion = SELF %q, FORWARD %q", got.Variables["SELF"], got.Variables["FORWARD"])
+	}
+}
+
 func TestReadEffectiveConfigRejectsMissingGlobalsAndSymlinkedUserConfig(t *testing.T) {
 	paths := effectiveConfigFixture(t)
 	if err := os.Remove(paths.MakeGlobals); err != nil {

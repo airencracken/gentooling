@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.8.2
+
+- Expands configuration references against the preceding assignment
+  environment, matching shell order and treating unset variables as empty.
+- Prevents exponential self-expansion for canonical first-layer profile
+  assignments such as `VARIABLE="${VARIABLE} value"`.
+
 ## v0.8.1
 
 - Accepts lowercase shell variable names used by canonical Gentoo profile
