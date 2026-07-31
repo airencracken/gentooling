@@ -20,7 +20,7 @@ func TestUseConditionExpressionBooleanSemantics(t *testing.T) {
 		{name: "unknown", known: false, want: Indeterminate},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if got := node.evaluate(test.use, test.known); got != test.want {
+			if got := node.evaluate(conditionEvaluation{use: test.use, useKnown: test.known}); got != test.want {
 				t.Fatalf("evaluate() = %q, want %q", got, test.want)
 			}
 		})
@@ -32,10 +32,10 @@ func TestUseConditionExpressionNegationAndPrecedence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := node.evaluate(map[string]bool{"test": true, "pgo": true}, true); got != Inapplicable {
+	if got := node.evaluate(conditionEvaluation{use: map[string]bool{"test": true, "pgo": true}, useKnown: true}); got != Inapplicable {
 		t.Fatalf("precedence evaluation = %q", got)
 	}
-	if got := node.evaluate(map[string]bool{"test": false}, true); got != Applicable {
+	if got := node.evaluate(conditionEvaluation{use: map[string]bool{"test": false}, useKnown: true}); got != Applicable {
 		t.Fatalf("negated evaluation = %q", got)
 	}
 }
@@ -48,13 +48,32 @@ func TestUseConditionExpressionRejectsArbitraryShell(t *testing.T) {
 	}
 }
 
+func TestKernelPredicateUsesExplicitTargetRelease(t *testing.T) {
+	node, err := parseUseConditionExpression("kernel_is -ge 5 11 3 && ! kernel_is -lt 4 18")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		release string
+		want    Applicability
+	}{
+		{release: "7.1.5-gentoo", want: Applicable},
+		{release: "5.10.9", want: Inapplicable},
+		{release: "", want: Indeterminate},
+	} {
+		if got := node.evaluate(conditionEvaluation{kernelRelease: test.release}); got != test.want {
+			t.Errorf("release %q = %q, want %q", test.release, got, test.want)
+		}
+	}
+}
+
 func FuzzUseConditionExpression(f *testing.F) {
 	for _, seed := range []string{"use foo", "! use foo", "use foo || use bar", "( use a && use b )", "$(bad)"} {
 		f.Add(seed)
 	}
 	f.Fuzz(func(t *testing.T, expression string) {
 		if node, err := parseUseConditionExpression(expression); err == nil {
-			_ = node.evaluate(map[string]bool{}, true)
+			_ = node.evaluate(conditionEvaluation{use: map[string]bool{}, useKnown: true})
 		}
 	})
 }

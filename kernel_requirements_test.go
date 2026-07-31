@@ -182,7 +182,7 @@ func TestEvaluateKernelRequirementsAssignmentReplacementAndAppend(t *testing.T) 
 	}
 }
 
-func TestReadKernelRequirementsDoesNotMisrepresentUnsupportedControlFlow(t *testing.T) {
+func TestEvaluateKernelRequirementsUsesExplicitKernelRelease(t *testing.T) {
 	candidate, repositories := kernelRequirementFixture(t, `pkg_setup() {
 	if kernel_is -ge 6 12 ; then
 		CONFIG_CHECK="MODVERSIONS"
@@ -192,22 +192,31 @@ func TestReadKernelRequirementsDoesNotMisrepresentUnsupportedControlFlow(t *test
 	else
 		CONFIG_CHECK="FEATURE_B"
 	fi
+	check_extra_config
 }
+
 `)
-	result, err := ReadKernelRequirements(context.Background(), candidate, repositories, KernelRequirementOptions{})
+	result, err := EvaluateKernelRequirements(context.Background(), candidate, repositories, KernelRequirementContext{Phase: "pkg_setup", KernelRelease: "7.1.5"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Dynamic) != 1 || result.Dynamic[0].Reason != "CONFIG_CHECK is guarded by unsupported shell control flow" {
-		t.Fatalf("unsupported flow = %+v", result)
-	}
-	bySymbol := make(map[string]KernelConfigRequirement)
+	bySymbol := make(map[string]Applicability)
 	for _, requirement := range result.Requirements {
-		bySymbol[requirement.Symbol] = requirement
+		bySymbol[requirement.Symbol] = requirement.Applicability
 	}
-	if !reflect.DeepEqual(bySymbol["FEATURE_A"].Conditions, []UseCondition{{Flag: "feature", Enabled: true}}) ||
-		!reflect.DeepEqual(bySymbol["FEATURE_B"].Conditions, []UseCondition{{Flag: "feature", Enabled: false}}) {
-		t.Fatalf("else conditions = %+v", result.Requirements)
+	if bySymbol["MODVERSIONS"] != Applicable {
+		t.Fatalf("kernel predicate result = %+v", result)
+	}
+	unknown, err := EvaluateKernelRequirements(context.Background(), candidate, repositories, KernelRequirementContext{Phase: "pkg_setup"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unknownBySymbol := make(map[string]Applicability)
+	for _, requirement := range unknown.Requirements {
+		unknownBySymbol[requirement.Symbol] = requirement.Applicability
+	}
+	if unknownBySymbol["MODVERSIONS"] != Indeterminate {
+		t.Fatalf("missing target kernel was not indeterminate: %+v", unknown)
 	}
 }
 
@@ -295,4 +304,67 @@ func FuzzKernelRequirementToken(f *testing.F) {
 			t.Fatalf("accepted invalid symbol %q from %q", requirement.Symbol, token)
 		}
 	})
+}
+
+func TestEvaluateKernelRequirementsStaticLoopsAndWrapper(t *testing.T) {
+	candidate, repositories := kernelRequirementFixture(t, `kernel_checks() {
+	declare -A checks=( [BPF]=yes [PERF_EVENTS]=yes )
+	for symbol in "${!checks[@]}"; do
+		CONFIG_CHECK+="~${symbol} "
+	done
+	check_extra_config
+}
+pkg_setup() {
+	kernel_checks
+}
+`)
+	result, err := EvaluateKernelRequirements(context.Background(), candidate, repositories, KernelRequirementContext{Phase: "pkg_setup", EffectiveUSE: []string{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make(map[string]Applicability)
+	for _, requirement := range result.Requirements {
+		got[requirement.Symbol] = requirement.Applicability
+	}
+	if !result.Complete || got["BPF"] != Applicable || got["PERF_EVENTS"] != Applicable || result.Requirements[0].Invocation.Function != "kernel_checks" {
+		t.Fatalf("static wrapper evaluation = %+v", result)
+	}
+}
+
+func TestEvaluateKernelRequirementsDynamicArrayBlocks(t *testing.T) {
+	candidate, repositories := kernelRequirementFixture(t, `pkg_setup() {
+	local checks=( "${DYNAMIC}" )
+	for symbol in "${checks[@]}"; do
+		CONFIG_CHECK+="~${symbol} "
+	done
+	linux-info_pkg_setup
+}
+`)
+	result, err := EvaluateKernelRequirements(context.Background(), candidate, repositories, KernelRequirementContext{Phase: "pkg_setup", EffectiveUSE: []string{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Complete || len(result.Unresolved) == 0 || !result.Unresolved[0].Blocking {
+		t.Fatalf("dynamic array = %+v", result)
+	}
+}
+
+func TestEvaluateKernelRequirementsInvocationSnapshot(t *testing.T) {
+	candidate, repositories := kernelRequirementFixture(t, `pkg_setup() {
+	CONFIG_CHECK="~TIMERFD"
+	check_extra_config
+	CONFIG_CHECK+="~EVENTFD"
+}
+`)
+	result, err := EvaluateKernelRequirements(context.Background(), candidate, repositories, KernelRequirementContext{Phase: "pkg_setup", EffectiveUSE: []string{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make(map[string]Applicability)
+	for _, requirement := range result.Requirements {
+		got[requirement.Symbol] = requirement.Applicability
+	}
+	if got["TIMERFD"] != Applicable || got["EVENTFD"] != Inapplicable {
+		t.Fatalf("invocation snapshot = %+v", result)
+	}
 }

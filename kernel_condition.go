@@ -2,35 +2,46 @@ package gentooling
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"unicode"
 )
 
 type conditionNode interface {
-	evaluate(map[string]bool, bool) Applicability
+	evaluate(conditionEvaluation) Applicability
+}
+
+type conditionEvaluation struct {
+	use           map[string]bool
+	useKnown      bool
+	kernelRelease string
 }
 
 type conditionUse struct{ flag string }
 type conditionNot struct{ child conditionNode }
 type conditionAnd struct{ left, right conditionNode }
 type conditionOr struct{ left, right conditionNode }
+type conditionKernel struct {
+	operator string
+	version  []int
+}
 
-func (node conditionUse) evaluate(use map[string]bool, known bool) Applicability {
-	if !known {
+func (node conditionUse) evaluate(evaluation conditionEvaluation) Applicability {
+	if !evaluation.useKnown {
 		return Indeterminate
 	}
-	if use[node.flag] {
+	if evaluation.use[node.flag] {
 		return Applicable
 	}
 	return Inapplicable
 }
 
-func (node conditionNot) evaluate(use map[string]bool, known bool) Applicability {
-	return invertApplicability(node.child.evaluate(use, known))
+func (node conditionNot) evaluate(evaluation conditionEvaluation) Applicability {
+	return invertApplicability(node.child.evaluate(evaluation))
 }
 
-func (node conditionAnd) evaluate(use map[string]bool, known bool) Applicability {
-	left, right := node.left.evaluate(use, known), node.right.evaluate(use, known)
+func (node conditionAnd) evaluate(evaluation conditionEvaluation) Applicability {
+	left, right := node.left.evaluate(evaluation), node.right.evaluate(evaluation)
 	if left == Inapplicable || right == Inapplicable {
 		return Inapplicable
 	}
@@ -40,13 +51,26 @@ func (node conditionAnd) evaluate(use map[string]bool, known bool) Applicability
 	return Applicable
 }
 
-func (node conditionOr) evaluate(use map[string]bool, known bool) Applicability {
-	left, right := node.left.evaluate(use, known), node.right.evaluate(use, known)
+func (node conditionOr) evaluate(evaluation conditionEvaluation) Applicability {
+	left, right := node.left.evaluate(evaluation), node.right.evaluate(evaluation)
 	if left == Applicable || right == Applicable {
 		return Applicable
 	}
 	if left == Indeterminate || right == Indeterminate {
 		return Indeterminate
+	}
+	return Inapplicable
+}
+
+func (node conditionKernel) evaluate(evaluation conditionEvaluation) Applicability {
+	current, ok := parseKernelRelease(evaluation.kernelRelease)
+	if !ok {
+		return Indeterminate
+	}
+	comparison := compareKernelVersions(current, node.version)
+	matched := map[string]bool{"-lt": comparison < 0, "-le": comparison <= 0, "-eq": comparison == 0, "-ge": comparison >= 0, "-gt": comparison > 0}[node.operator]
+	if matched {
+		return Applicable
 	}
 	return Inapplicable
 }
@@ -148,6 +172,29 @@ func (parser *conditionParser) parseUnary() (conditionNode, error) {
 		}
 		return node, nil
 	}
+	if parser.accept("kernel_is") {
+		if parser.index >= len(parser.tokens) {
+			return nil, fmt.Errorf("%w: kernel_is requires a comparison", ErrInvalidData)
+		}
+		operator := parser.tokens[parser.index]
+		parser.index++
+		if operator != "-lt" && operator != "-le" && operator != "-eq" && operator != "-ge" && operator != "-gt" {
+			return nil, fmt.Errorf("%w: unsupported kernel_is operator %q", ErrInvalidData, operator)
+		}
+		var version []int
+		for parser.index < len(parser.tokens) && parser.tokens[parser.index] != "&&" && parser.tokens[parser.index] != "||" && parser.tokens[parser.index] != ")" {
+			part, err := strconv.Atoi(parser.tokens[parser.index])
+			if err != nil || part < 0 {
+				return nil, fmt.Errorf("%w: invalid kernel_is version component %q", ErrInvalidData, parser.tokens[parser.index])
+			}
+			version = append(version, part)
+			parser.index++
+		}
+		if len(version) == 0 || len(version) > 4 {
+			return nil, fmt.Errorf("%w: kernel_is requires one to four version components", ErrInvalidData)
+		}
+		return conditionKernel{operator: operator, version: version}, nil
+	}
 	if !parser.accept("use") || parser.index >= len(parser.tokens) {
 		return nil, fmt.Errorf("%w: expected bounded 'use FLAG' condition", ErrInvalidData)
 	}
@@ -157,6 +204,53 @@ func (parser *conditionParser) parseUnary() (conditionNode, error) {
 		return nil, fmt.Errorf("%w: invalid USE flag %q", ErrInvalidData, flag)
 	}
 	return conditionUse{flag: flag}, nil
+}
+
+func parseKernelRelease(release string) ([]int, bool) {
+	release = strings.TrimSpace(release)
+	if release == "" {
+		return nil, false
+	}
+	var result []int
+	for _, part := range strings.Split(release, ".") {
+		digits := strings.TrimLeftFunc(part, unicode.IsDigit)
+		numeric := strings.TrimSuffix(part, digits)
+		if numeric == "" {
+			break
+		}
+		value, err := strconv.Atoi(numeric)
+		if err != nil {
+			return nil, false
+		}
+		result = append(result, value)
+		if digits != "" {
+			break
+		}
+	}
+	return result, len(result) != 0
+}
+
+func compareKernelVersions(left, right []int) int {
+	length := len(left)
+	if len(right) > length {
+		length = len(right)
+	}
+	for index := 0; index < length; index++ {
+		var a, b int
+		if index < len(left) {
+			a = left[index]
+		}
+		if index < len(right) {
+			b = right[index]
+		}
+		if a < b {
+			return -1
+		}
+		if a > b {
+			return 1
+		}
+	}
+	return 0
 }
 
 func validConditionUseFlag(flag string) bool {

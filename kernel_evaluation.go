@@ -81,8 +81,8 @@ func EvaluateKernelRequirements(ctx context.Context, candidate RepositoryCandida
 	}
 	result := EvaluatedKernelRequirements{Package: set.Package, Complete: true}
 	for _, requirement := range set.Requirements {
-		applicability := kernelEvidenceApplicability(requirement.Conditions, requirement.ConditionExpression, use, useKnown)
-		invocation := invocationFor(requirement.Function, set.Invocations, evaluation.Phase)
+		applicability := kernelEvidenceApplicability(requirement.Conditions, requirement.ConditionExpression, use, useKnown, evaluation.KernelRelease)
+		invocation := invocationFor(requirement.Function, requirement.Source, set.Invocations, set.Calls, evaluation.Phase)
 		if requirement.Function != "" && invocation.Function == "" {
 			applicability = Inapplicable
 		}
@@ -95,8 +95,8 @@ func EvaluateKernelRequirements(ctx context.Context, candidate RepositoryCandida
 	}
 	applyRequirementAssignmentFlow(result.Requirements, evaluation.Phase)
 	for _, dynamic := range set.Dynamic {
-		applicability := kernelEvidenceApplicability(dynamic.Conditions, dynamic.ConditionExpression, use, useKnown)
-		invocation := invocationFor(dynamic.Function, set.Invocations, evaluation.Phase)
+		applicability := kernelEvidenceApplicability(dynamic.Conditions, dynamic.ConditionExpression, use, useKnown, evaluation.KernelRelease)
+		invocation := invocationFor(dynamic.Function, dynamic.Source, set.Invocations, set.Calls, evaluation.Phase)
 		if dynamic.Function != "" && invocation.Function == "" {
 			applicability = Inapplicable
 		}
@@ -154,13 +154,13 @@ func applyRequirementAssignmentFlow(requirements []EvaluatedKernelRequirement, p
 	}
 }
 
-func kernelEvidenceApplicability(conditions []UseCondition, expression string, enabled map[string]bool, known bool) Applicability {
+func kernelEvidenceApplicability(conditions []UseCondition, expression string, enabled map[string]bool, known bool, kernelRelease string) Applicability {
 	if expression != "" {
 		node, err := parseUseConditionExpression(expression)
 		if err != nil {
 			return Indeterminate
 		}
-		return node.evaluate(enabled, known)
+		return node.evaluate(conditionEvaluation{use: enabled, useKnown: known, kernelRelease: kernelRelease})
 	}
 	return conditionsApplicability(conditions, enabled, known)
 }
@@ -177,15 +177,42 @@ func conditionsApplicability(conditions []UseCondition, enabled map[string]bool,
 	return Applicable
 }
 
-func invocationFor(function string, invocations []KernelCheckInvocation, phase string) KernelCheckInvocation {
+func invocationFor(function string, source PolicySource, invocations []KernelCheckInvocation, calls []KernelFunctionCall, phase string) KernelCheckInvocation {
 	for _, invocation := range invocations {
 		if function != "" && invocation.Function != function {
 			continue
 		}
-		if phase != "" && invocation.Function != phase && !strings.HasSuffix(invocation.Function, "_"+phase) {
+		if function == invocation.Function && source.Path == invocation.Source.Path && source.Line > invocation.Source.Line {
+			continue
+		}
+		if phase != "" && !kernelFunctionReachable(phase, invocation.Function, calls) &&
+			invocation.Function != phase && !strings.HasSuffix(invocation.Function, "_"+phase) {
 			continue
 		}
 		return invocation
 	}
 	return KernelCheckInvocation{}
+}
+
+func kernelFunctionReachable(from, target string, calls []KernelFunctionCall) bool {
+	if from == target {
+		return true
+	}
+	seen := map[string]bool{from: true}
+	queue := []string{from}
+	for len(queue) != 0 {
+		caller := queue[0]
+		queue = queue[1:]
+		for _, call := range calls {
+			if call.Caller != caller || seen[call.Callee] {
+				continue
+			}
+			if call.Callee == target {
+				return true
+			}
+			seen[call.Callee] = true
+			queue = append(queue, call.Callee)
+		}
+	}
+	return false
 }

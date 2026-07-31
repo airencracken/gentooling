@@ -63,11 +63,18 @@ type KernelCheckInvocation struct {
 	Origin              string
 }
 
+type KernelFunctionCall struct {
+	Caller string
+	Callee string
+	Source PolicySource
+}
+
 type KernelRequirementSet struct {
 	Package      PackageID
 	Requirements []KernelConfigRequirement
 	Dynamic      []DynamicKernelEvidence
 	Invocations  []KernelCheckInvocation
+	Calls        []KernelFunctionCall
 }
 
 type KernelRequirementOptions struct {
@@ -98,6 +105,9 @@ var (
 	kernelIfUsePattern      = regexp.MustCompile(`^if\s+use\s+(!?)([A-Za-z0-9+_@-]+)\s*;\s*then\s*$`)
 	kernelFunctionPattern   = regexp.MustCompile(`^([A-Za-z0-9+_.-]+)\s*\(\)\s*\{`)
 	kernelSymbolPattern     = regexp.MustCompile(`^[A-Z0-9_]+$`)
+	kernelArrayPattern      = regexp.MustCompile(`^(?:local\s+|declare\s+-[aA]\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*\((?s:(.*))\)\s*$`)
+	kernelArrayKeyPattern   = regexp.MustCompile(`\[([^][[:space:]]+)\]\s*=\s*(?:"[^"]*"|'[^']*'|[^[:space:]]+)`)
+	kernelLoopPattern       = regexp.MustCompile(`^for\s+([A-Za-z_][A-Za-z0-9_]*)\s+in\s+"?\$\{(!?)([A-Za-z_][A-Za-z0-9_]*)\[@\]\}"?\s*;?\s*do\s*$`)
 )
 
 // ReadKernelRequirements extracts conservative static Kconfig evidence from
@@ -208,6 +218,7 @@ func readKernelRequirementSource(ctx context.Context, path, origin string, resul
 	function := ""
 	var conditions []UseCondition
 	var controlStack []kernelControlFrame
+	staticArrays := make(map[string]staticKernelArray)
 	for scanner.Scan() {
 		lineNumber++
 		if err := ctx.Err(); err != nil {
@@ -215,7 +226,7 @@ func readKernelRequirementSource(ctx context.Context, path, origin string, resul
 		}
 		startLine := lineNumber
 		raw := scanner.Text()
-		for strings.Contains(raw, "CONFIG_CHECK") && shellQuoteOpen(raw) {
+		for (strings.Contains(raw, "CONFIG_CHECK") && shellQuoteOpen(raw)) || shellArrayOpen(raw) {
 			if !scanner.Scan() {
 				break
 			}
@@ -224,6 +235,20 @@ func readKernelRequirementSource(ctx context.Context, path, origin string, resul
 		}
 		line := strings.TrimSpace(raw)
 		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if match := kernelArrayPattern.FindStringSubmatch(line); len(match) != 0 {
+			if array, ok := parseStaticKernelArray(match[2]); ok {
+				staticArrays[match[1]] = array
+			} else {
+				result.Dynamic = append(result.Dynamic, DynamicKernelEvidence{
+					Expression: line,
+					Reason:     "kernel requirement array requires shell evaluation",
+					Function:   function,
+					Source:     PolicySource{Path: path, Line: startLine},
+					Origin:     origin,
+				})
+			}
 			continue
 		}
 		if match := kernelFunctionPattern.FindStringSubmatch(line); len(match) != 0 {
@@ -251,6 +276,15 @@ func readKernelRequirementSource(ctx context.Context, path, origin string, resul
 			expression := shellIfExpression(line, "if")
 			_, parseErr := parseUseConditionExpression(expression)
 			controlStack = append(controlStack, kernelControlFrame{supported: parseErr == nil, expression: expression, prior: expression})
+			continue
+		}
+		if match := kernelLoopPattern.FindStringSubmatch(line); len(match) != 0 {
+			array, ok := staticArrays[match[3]]
+			values := array.values
+			if match[2] == "!" {
+				values = array.keys
+			}
+			controlStack = append(controlStack, kernelControlFrame{supported: ok && len(values) <= 256, loopVar: match[1], loopValues: append([]string(nil), values...)})
 			continue
 		}
 		if strings.HasPrefix(line, "case ") && strings.HasSuffix(line, " in") ||
@@ -310,6 +344,9 @@ func readKernelRequirementSource(ctx context.Context, path, origin string, resul
 				Function: function, Conditions: cloneUseConditions(lineConditions), ConditionExpression: conditionExpression, Source: source, Origin: origin,
 			})
 		}
+		if call := staticKernelFunctionCall(line); call != "" {
+			result.Calls = append(result.Calls, KernelFunctionCall{Caller: function, Callee: call, Source: source})
+		}
 		if !strings.Contains(line, "CONFIG_CHECK") {
 			continue
 		}
@@ -330,7 +367,11 @@ func readKernelRequirementSource(ctx context.Context, path, origin string, resul
 		if value == "" {
 			value = match[3]
 		}
-		if strings.ContainsAny(value, "$`(){}") {
+		expandedValues, expanded := expandStaticLoopValues(value, controlStack)
+		if !expanded || len(expandedValues) == 0 {
+			expandedValues = []string{value}
+		}
+		if strings.ContainsAny(strings.Join(expandedValues, " "), "$`(){}") {
 			result.Dynamic = append(result.Dynamic, DynamicKernelEvidence{
 				Expression: strings.TrimSpace(raw), Reason: "CONFIG_CHECK value contains a dynamic shell expression",
 				Conditions: cloneUseConditions(lineConditions), ConditionExpression: conditionExpression, Function: function, Source: source, Origin: origin,
@@ -338,25 +379,44 @@ func readKernelRequirementSource(ctx context.Context, path, origin string, resul
 			})
 			continue
 		}
-		for _, token := range strings.Fields(value) {
-			requirement, ok := parseKernelRequirementToken(token, source, origin, function, lineConditions)
-			requirement.ConditionExpression = conditionExpression
-			requirement.AssignmentOperator = assignmentOperator
-			if !ok {
-				result.Dynamic = append(result.Dynamic, DynamicKernelEvidence{
-					Expression: token, Reason: "CONFIG_CHECK token is not a static Kconfig symbol",
-					Conditions: cloneUseConditions(lineConditions), ConditionExpression: conditionExpression, Function: function, Source: source, Origin: origin,
-					AssignmentOperator: assignmentOperator,
-				})
-				continue
+		for _, expandedValue := range expandedValues {
+			for _, token := range strings.Fields(expandedValue) {
+				requirement, ok := parseKernelRequirementToken(token, source, origin, function, lineConditions)
+				requirement.ConditionExpression = conditionExpression
+				requirement.AssignmentOperator = assignmentOperator
+				if !ok {
+					result.Dynamic = append(result.Dynamic, DynamicKernelEvidence{
+						Expression: token, Reason: "CONFIG_CHECK token is not a static Kconfig symbol",
+						Conditions: cloneUseConditions(lineConditions), ConditionExpression: conditionExpression, Function: function, Source: source, Origin: origin,
+						AssignmentOperator: assignmentOperator,
+					})
+					continue
+				}
+				result.Requirements = append(result.Requirements, requirement)
 			}
-			result.Requirements = append(result.Requirements, requirement)
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		return fmt.Errorf("read kernel requirement source %q: %w", path, err)
 	}
 	return nil
+}
+
+var kernelFunctionCallPattern = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_]*)\s*(?:$|(?:[^=].*)$)`)
+
+func staticKernelFunctionCall(line string) string {
+	if strings.ContainsAny(line, "=|&;`$(){}") {
+		return ""
+	}
+	match := kernelFunctionCallPattern.FindStringSubmatch(strings.TrimSpace(line))
+	if len(match) == 0 {
+		return ""
+	}
+	switch match[1] {
+	case "local", "declare", "return", "use", "kernel_is", "check_extra_config", "linux-info_pkg_setup":
+		return ""
+	}
+	return match[1]
 }
 
 func shellQuoteOpen(value string) bool {
@@ -407,6 +467,63 @@ type kernelControlFrame struct {
 	supported  bool
 	expression string
 	prior      string
+	loopVar    string
+	loopValues []string
+}
+
+type staticKernelArray struct{ keys, values []string }
+
+func shellArrayOpen(value string) bool {
+	if !strings.Contains(value, "=(") && !strings.Contains(value, "= (") {
+		return false
+	}
+	return strings.Count(value, "(") > strings.Count(value, ")")
+}
+
+func parseStaticKernelArray(body string) (staticKernelArray, bool) {
+	if strings.ContainsAny(body, "`$;") {
+		return staticKernelArray{}, false
+	}
+	array := staticKernelArray{}
+	for _, match := range kernelArrayKeyPattern.FindAllStringSubmatch(body, -1) {
+		array.keys = append(array.keys, match[1])
+	}
+	cleaned := kernelArrayKeyPattern.ReplaceAllString(body, "")
+	if len(array.keys) == 0 {
+		for _, value := range strings.Fields(cleaned) {
+			array.values = append(array.values, strings.Trim(value, "\"'"))
+		}
+	} else {
+		// Associative-array consumers in the supported subset iterate keys. Values
+		// are retained only when they are independently literal.
+		for _, match := range kernelArrayKeyPattern.FindAllString(body, -1) {
+			parts := strings.SplitN(match, "=", 2)
+			array.values = append(array.values, strings.Trim(strings.TrimSpace(parts[1]), "\"'"))
+		}
+	}
+	return array, true
+}
+
+func expandStaticLoopValues(value string, stack []kernelControlFrame) ([]string, bool) {
+	values := []string{value}
+	expanded := false
+	for _, frame := range stack {
+		if frame.loopVar == "" {
+			continue
+		}
+		marker := "${" + frame.loopVar + "}"
+		var next []string
+		for _, current := range values {
+			for _, replacement := range frame.loopValues {
+				next = append(next, strings.ReplaceAll(current, marker, replacement))
+			}
+		}
+		values, expanded = next, true
+		if len(values) > 256 {
+			return nil, false
+		}
+	}
+	return values, expanded
 }
 
 func shellIfExpression(line, keyword string) string {
