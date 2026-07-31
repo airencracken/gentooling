@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.8.1
+
+- Accepts lowercase shell variable names used by canonical Gentoo profile
+  configuration, including Autoconf cache variables.
+
 ## v0.8.0
 
 - Adds deterministic, bounded repository candidate discovery from Portage's

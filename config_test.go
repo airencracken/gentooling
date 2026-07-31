@@ -71,6 +71,7 @@ ACCEPT_KEYWORDS="amd64 \
 ~amd64"
 LINK_FLAGS="-O2 -pipe -fno-\
 plt"
+ac_cv_c_undeclared_builtin_options="none needed"
 `)
 	got, err := ReadEffectiveConfig(context.Background(), paths, ConfigOptions{})
 	if err != nil {
@@ -84,6 +85,9 @@ plt"
 	}
 	if got.Variables["LINK_FLAGS"] != "-O2 -pipe -fno-plt" {
 		t.Fatalf("LINK_FLAGS = %q", got.Variables["LINK_FLAGS"])
+	}
+	if got.Variables["ac_cv_c_undeclared_builtin_options"] != "none needed" {
+		t.Fatalf("lowercase cache variable = %q", got.Variables["ac_cv_c_undeclared_builtin_options"])
 	}
 }
 

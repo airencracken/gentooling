@@ -435,15 +435,20 @@ func flagChange(raw string, source PolicySource, layer string) FlagChange {
 }
 
 func validConfigName(name string) bool {
-	if name == "" || !((name[0] >= 'A' && name[0] <= 'Z') || name[0] == '_') {
+	if name == "" || !asciiConfigLetter(name[0]) && name[0] != '_' {
 		return false
 	}
 	for _, character := range name[1:] {
-		if !((character >= 'A' && character <= 'Z') || (character >= '0' && character <= '9') || character == '_') {
+		if !((character >= 'A' && character <= 'Z') || (character >= 'a' && character <= 'z') ||
+			(character >= '0' && character <= '9') || character == '_') {
 			return false
 		}
 	}
 	return true
+}
+
+func asciiConfigLetter(value byte) bool {
+	return value >= 'A' && value <= 'Z' || value >= 'a' && value <= 'z'
 }
 
 func incrementalConfigVariable(name string) bool {
