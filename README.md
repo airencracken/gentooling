@@ -14,6 +14,14 @@ paths := gentooling.DefaultSystemPaths("/")
 repositories, err := gentooling.ReadRepositories(ctx, paths)
 candidateInventory, err := gentooling.ReadRepositoryCandidates(ctx, repositories,
     gentooling.CandidateOptions{Integrity: gentooling.RequireComplete})
+kernelRequirements, err := gentooling.ReadKernelRequirements(ctx,
+    candidateInventory.Candidates[0], repositories,
+    gentooling.KernelRequirementOptions{Integrity: gentooling.AllowPartial})
+modules, err := gentooling.ReadInstalledKernelModules(ctx, paths,
+    gentooling.InstalledKernelModuleOptions{
+        Integrity: gentooling.RequireComplete,
+        TargetKernelRelease: "6.12.31",
+    })
 inventory, err := gentooling.ReadInstalled(ctx, paths, gentooling.InstalledOptions{
     Integrity: gentooling.RequireComplete,
 })
@@ -47,14 +55,13 @@ snapshot, err := gentooling.ReadSystemSnapshot(ctx, paths, gentooling.SnapshotOp
     Config: gentooling.ConfigOptions{
         Environment: os.Environ(),
     },
+    IncludeCandidates: true,
+    Candidates: gentooling.CandidateOptions{
+        Integrity: gentooling.RequireComplete,
+    },
 })
 
-visibility, err := snapshot.Config.EvaluateVisibility(ctx,
-    gentooling.PackageVisibilityContext{
-        ID: candidateID,
-        Keywords: []string{"amd64", "~arm64"},
-    },
-)
+prospective, err := snapshot.EvaluateCandidate(ctx, candidateID)
 ```
 
 `Environment` is always explicit. Passing `nil` performs a disk-only
@@ -74,6 +81,12 @@ respects context cancellation, retries a bounded number of observations, and
 returns `ErrConcurrentMutation` rather than a mixed view when state does not
 stabilize.
 
+Setting `IncludeCandidates` adds repository metadata to both stabilizing
+observations. `SystemSnapshot.EvaluateCandidate` then evaluates visibility and
+effective USE together from that captured policy and candidate state. Missing
+or ambiguous candidate evidence is an error rather than an implicit lookup
+outside the snapshot.
+
 Alternate-root callers use the same absolute locations normally written in
 repos.conf; Gentooling rebases them beneath `SystemPaths.Root` and never
 consults the corresponding host paths. Repositories are returned
@@ -82,10 +95,26 @@ snapshots.
 
 Repository candidate discovery reads Portage's evaluated `metadata/md5-cache`
 rather than executing ebuild shell code. It exposes version, repository,
-slot/subslot, EAPI, KEYWORDS, structured IUSE defaults, and dependency
-metadata. Scans are bounded, deterministic, symlink-safe, and report malformed,
-unreadable, or concurrently changing evidence through the same partial and
-strict integrity model as installed-package inventory.
+slot/subslot, EAPI, KEYWORDS, structured IUSE defaults, REQUIRED_USE, inherited
+eclasses, and dependency metadata. Scans are bounded, deterministic,
+symlink-safe, and report malformed, unreadable, or concurrently changing
+evidence through the same partial and strict integrity model as
+installed-package inventory.
+
+Kernel requirement discovery never sources an ebuild or eclass. It structures
+literal `CONFIG_CHECK` symbols, warning/fatal behavior, required-disabled
+symbols, USE conditions, source provenance, and `check_extra_config`
+invocations. Expressions that require shell evaluation remain explicit
+`DynamicKernelEvidence`. `RequireComplete` rejects those unresolved expressions;
+`AllowPartial` returns the useful static subset and diagnostics. Consumers must
+not treat absence of static requirements as proof that runtime policy is empty.
+The runtime dispatch performed by `linux-info.eclass` is itself retained as
+dynamic evidence, even when every discovered symbol is literal.
+
+Installed kernel-module inventory combines VDB `INHERITED` metadata with owned
+out-of-tree `.ko` artifacts. The target kernel release is explicit and is
+compared with the releases embedded in owned module paths. Gentooling never
+consults the running kernel implicitly.
 
 Canonical multiline assignments in `make.globals` and `make.conf`, including
 quoted `FEATURES` blocks and backslash continuations, retain the source line of

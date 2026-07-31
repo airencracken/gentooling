@@ -57,6 +57,82 @@ func TestReadSystemSnapshotSupportsExplicitStabilizedLocklessMode(t *testing.T) 
 	}
 }
 
+func TestReadSystemSnapshotBindsProspectiveVisibilityAndUse(t *testing.T) {
+	paths := snapshotFixture(t)
+	repository := paths.Repositories[0].Path
+	writeCandidate(t, repository, "app-misc", "example-2", "EAPI=8\nSLOT=0/2\nKEYWORDS=amd64\nIUSE=+ssl feature\n")
+	got, err := ReadSystemSnapshot(context.Background(), paths, SnapshotOptions{
+		Installed:         InstalledOptions{Integrity: RequireComplete},
+		IncludeCandidates: true,
+		Candidates:        CandidateOptions{Integrity: RequireComplete},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	evaluation, err := got.EvaluateCandidate(context.Background(), PackageID{
+		Category: "app-misc", Name: "example", Version: "2", Repository: "gentoo",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !evaluation.Visibility.Visible || !evaluation.Visibility.Stable {
+		t.Fatalf("visibility = %+v", evaluation.Visibility)
+	}
+	ssl, found := evaluation.Use.Decision("ssl")
+	if !found || !ssl.Enabled {
+		t.Fatalf("USE evaluation = %+v", evaluation.Use)
+	}
+	evaluation.Candidate.Keywords[0] = "mutated"
+	again, err := got.EvaluateCandidate(context.Background(), PackageID{
+		Category: "app-misc", Name: "example", Version: "2", Repository: "gentoo",
+	})
+	if err != nil || again.Candidate.Keywords[0] != "amd64" {
+		t.Fatalf("snapshot candidate ownership = %+v, %v", again, err)
+	}
+}
+
+func TestEvaluateCandidateRejectsMissingAndAmbiguousEvidence(t *testing.T) {
+	snapshot := SystemSnapshot{Candidates: CandidateInventory{Candidates: []RepositoryCandidate{
+		{ID: PackageID{Category: "app-misc", Name: "example", Version: "1", Repository: "a"}},
+		{ID: PackageID{Category: "app-misc", Name: "example", Version: "1", Repository: "b"}},
+	}}}
+	_, err := snapshot.EvaluateCandidate(context.Background(), PackageID{Category: "app-misc", Name: "missing", Version: "1"})
+	if !errors.Is(err, ErrCandidateNotFound) {
+		t.Fatalf("missing error = %v", err)
+	}
+	_, err = snapshot.EvaluateCandidate(context.Background(), PackageID{Category: "app-misc", Name: "example", Version: "1"})
+	if !errors.Is(err, ErrInvalidData) {
+		t.Fatalf("ambiguous error = %v", err)
+	}
+}
+
+func TestReadSystemSnapshotDetectsCandidateMutationBetweenObservations(t *testing.T) {
+	paths := snapshotFixture(t)
+	repository := paths.Repositories[0].Path
+	cache := writeCandidate(t, repository, "app-misc", "example-2", "EAPI=8\nSLOT=0\nKEYWORDS=amd64\nIUSE=ssl\n")
+	change := false
+	_, err := ReadSystemSnapshot(context.Background(), paths, SnapshotOptions{
+		Attempts:          3,
+		Consistency:       StabilizedLockless,
+		Installed:         InstalledOptions{Integrity: RequireComplete},
+		IncludeCandidates: true,
+		Candidates:        CandidateOptions{Integrity: RequireComplete},
+		betweenObservations: func(int) {
+			change = !change
+			keywords := "amd64"
+			if change {
+				keywords = "~amd64"
+			}
+			if writeErr := os.WriteFile(cache, []byte("EAPI=8\nSLOT=0\nKEYWORDS="+keywords+"\nIUSE=ssl\n"), 0o644); writeErr != nil {
+				t.Fatal(writeErr)
+			}
+		},
+	})
+	if !errors.Is(err, ErrConcurrentMutation) {
+		t.Fatalf("candidate mutation error = %v", err)
+	}
+}
+
 func TestReadSystemSnapshotRejectsUnknownConsistencyMode(t *testing.T) {
 	_, err := ReadSystemSnapshot(context.Background(), SystemPaths{}, SnapshotOptions{
 		Consistency: SnapshotConsistency(255),

@@ -34,3 +34,12 @@ Repository locations are interpreted relative to explicit `SystemPaths.Root`,
 and discovered repositories are ordered masters before children. Snapshot
 consistency modes are validated public evidence: locked mode never degrades to
 lockless mode implicitly.
+
+Kernel requirements are conservative evidence. Static requirements and dynamic
+shell expressions are separate public contracts; Gentooling does not execute
+ebuild or eclass code to convert dynamic evidence into a claim. Kernel-module
+rebuild state is evaluated only against an explicit target release.
+
+Candidate visibility and USE evaluation performed through `SystemSnapshot` is
+bound to the candidates and policy retained in that stabilized snapshot. It
+never performs an implicit live repository lookup.

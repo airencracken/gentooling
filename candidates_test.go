@@ -24,7 +24,7 @@ func writeCandidate(t *testing.T, root, category, packageVersion, metadata strin
 
 func TestReadRepositoryCandidatesReturnsEvaluatedMetadataDeterministically(t *testing.T) {
 	root := t.TempDir()
-	writeCandidate(t, root, "sys-kernel", "example-10.0", "EAPI=8\nSLOT=10/10.0\nKEYWORDS=amd64 ~arm64\nIUSE=+modules -debug test\nDEPEND=dev-libs/a\n")
+	writeCandidate(t, root, "sys-kernel", "example-10.0", "EAPI=8\nSLOT=10/10.0\nKEYWORDS=amd64 ~arm64\nIUSE=+modules -debug test\nREQUIRED_USE=modules? ( test )\n_eclasses_=linux-info abc linux-mod-r1 def\nDEPEND=dev-libs/a\n")
 	writeCandidate(t, root, "sys-kernel", "example-2.0", "EAPI=8\nSLOT=2\nKEYWORDS=amd64\nIUSE=modules\n")
 	inventory, err := ReadRepositoryCandidates(context.Background(), []Repository{{Name: "test", Location: root}}, CandidateOptions{
 		Integrity: RequireComplete,
@@ -43,7 +43,8 @@ func TestReadRepositoryCandidatesReturnsEvaluatedMetadataDeterministically(t *te
 			{Name: "modules", Default: UseDefaultEnabled},
 			{Name: "debug", Default: UseDefaultDisabled},
 			{Name: "test", Default: UseDefaultUnspecified},
-		}) || candidate.Dependencies.Depend != "dev-libs/a" {
+		}) || !reflect.DeepEqual(candidate.Inherited, []string{"linux-info", "linux-mod-r1"}) ||
+		candidate.RequiredUse != "modules? ( test )" || candidate.Dependencies.Depend != "dev-libs/a" {
 		t.Fatalf("candidate metadata = %+v", candidate)
 	}
 }
@@ -109,6 +110,19 @@ func TestReadRepositoryCandidatesRejectsSymlinkedEvidence(t *testing.T) {
 	if len(inventory.Candidates) != 1 || len(inventory.Issues) != 1 ||
 		inventory.Issues[0].Code != IssueInvalidMetadata || inventory.Issues[0].Path != link {
 		t.Fatalf("symlink evidence = %+v", inventory)
+	}
+}
+
+func TestReadRepositoryCandidatesRejectsMalformedEclassMetadata(t *testing.T) {
+	root := t.TempDir()
+	path := writeCandidate(t, root, "app-misc", "example-1", "EAPI=8\nSLOT=0\n_eclasses_=linux-info missing-hash dangling\n")
+	inventory, err := ReadRepositoryCandidates(context.Background(), []Repository{{Name: "test", Location: root}}, CandidateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inventory.Candidates) != 0 || len(inventory.Issues) != 1 ||
+		inventory.Issues[0].Code != IssueInvalidMetadata || inventory.Issues[0].Path != path {
+		t.Fatalf("eclass metadata = %+v", inventory)
 	}
 }
 

@@ -163,3 +163,24 @@ func TestRepositoryCandidatePublicContract(t *testing.T) {
 		t.Fatalf("public candidate contract = %+v", candidate)
 	}
 }
+
+func TestKernelConsumerPublicContracts(t *testing.T) {
+	requirement := gentooling.KernelConfigRequirement{
+		Symbol: "MODULES", Expectation: gentooling.KernelConfigEnabled,
+		Severity:   gentooling.KernelRequirementFatal,
+		Conditions: []gentooling.UseCondition{{Flag: "modules", Enabled: true}},
+	}
+	if requirement.Symbol != "MODULES" || !requirement.Conditions[0].Enabled {
+		t.Fatalf("kernel requirement contract = %+v", requirement)
+	}
+	module := gentooling.InstalledKernelModulePackage{
+		Package: gentooling.PackageID{Category: "sys-fs", Name: "zfs-kmod", Version: "2.3"},
+		Rebuild: gentooling.KernelModuleTargetMissing, NeedsRebuild: true,
+	}
+	if module.Rebuild.Validate() != nil || !module.NeedsRebuild {
+		t.Fatalf("module state contract = %+v", module)
+	}
+	if !errors.Is(gentooling.ErrCandidateNotFound, gentooling.ErrCandidateNotFound) {
+		t.Fatal("candidate error contract changed")
+	}
+}

@@ -11,13 +11,18 @@ import (
 var (
 	ErrLockObservationUnsupported = errors.New("gentooling: Portage lock observation unsupported")
 	ErrStateLockUnavailable       = errors.New("gentooling: Portage state lock unavailable")
+	ErrCandidateNotFound          = errors.New("gentooling: repository candidate not found")
 )
 
 // SnapshotOptions configures one combined system-state observation.
 type SnapshotOptions struct {
-	Installed   InstalledOptions
-	Config      ConfigOptions
-	Consistency SnapshotConsistency
+	Installed  InstalledOptions
+	Config     ConfigOptions
+	Candidates CandidateOptions
+	// IncludeCandidates binds repository candidates to each stabilized
+	// observation so prospective policy evaluation cannot mix snapshots.
+	IncludeCandidates bool
+	Consistency       SnapshotConsistency
 	// Attempts is the maximum number of complete observations. Zero uses 3.
 	Attempts int
 
@@ -30,6 +35,7 @@ type SystemSnapshot struct {
 	Installed    InstalledInventory
 	Config       EffectiveConfig
 	Repositories []Repository
+	Candidates   CandidateInventory
 	Selections   Selections
 	Consistency  SnapshotConsistency
 }
@@ -116,6 +122,9 @@ func readSystemObservation(ctx context.Context, paths SystemPaths, options Snaps
 	go func() {
 		defer wait.Done()
 		config, errs[1] = ReadEffectiveConfig(observationContext, paths, options.Config)
+		if errs[1] == nil && options.IncludeCandidates {
+			result.Candidates, errs[1] = ReadRepositoryCandidates(observationContext, config.Repositories, options.Candidates)
+		}
 		if errs[1] != nil {
 			cancel()
 		}
@@ -149,4 +158,53 @@ func readSystemObservation(ctx context.Context, paths SystemPaths, options Snaps
 	result.Installed, result.Config, result.Selections = inventory, config, selections
 	result.Repositories = cloneRepositories(config.Repositories)
 	return result, nil
+}
+
+type ProspectiveCandidateEvaluation struct {
+	Candidate  RepositoryCandidate
+	Visibility VisibilityResult
+	Use        UseEvaluation
+}
+
+// EvaluateCandidate evaluates one exact candidate using configuration and
+// repository evidence captured by this stabilized snapshot.
+func (snapshot SystemSnapshot) EvaluateCandidate(ctx context.Context, id PackageID) (ProspectiveCandidateEvaluation, error) {
+	if err := ctx.Err(); err != nil {
+		return ProspectiveCandidateEvaluation{}, err
+	}
+	var found *RepositoryCandidate
+	for index := range snapshot.Candidates.Candidates {
+		candidate := &snapshot.Candidates.Candidates[index]
+		if candidate.ID.Category != id.Category || candidate.ID.Name != id.Name ||
+			candidate.ID.Version != id.Version || id.Repository != "" && candidate.ID.Repository != id.Repository {
+			continue
+		}
+		if id.Slot != "" && candidate.ID.Slot != id.Slot {
+			continue
+		}
+		if found != nil {
+			return ProspectiveCandidateEvaluation{}, fmt.Errorf("%w: %s is ambiguous without a repository", ErrInvalidData, id.CPV())
+		}
+		found = candidate
+	}
+	if found == nil {
+		return ProspectiveCandidateEvaluation{}, fmt.Errorf("%w: %s", ErrCandidateNotFound, id.CPV())
+	}
+	visibility, err := snapshot.Config.EvaluateVisibility(ctx, PackageVisibilityContext{
+		ID: found.ID, Keywords: append([]string(nil), found.Keywords...),
+	})
+	if err != nil {
+		return ProspectiveCandidateEvaluation{}, err
+	}
+	use, err := snapshot.Config.EvaluateUse(ctx, PackageContext{
+		ID: found.ID, DeclaredUse: append([]UseDeclaration(nil), found.DeclaredUse...), Stable: visibility.Stable,
+	})
+	if err != nil {
+		return ProspectiveCandidateEvaluation{}, err
+	}
+	candidate := *found
+	candidate.Keywords = append([]string(nil), found.Keywords...)
+	candidate.DeclaredUse = append([]UseDeclaration(nil), found.DeclaredUse...)
+	candidate.Inherited = append([]string(nil), found.Inherited...)
+	return ProspectiveCandidateEvaluation{Candidate: candidate, Visibility: visibility, Use: use}, nil
 }

@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.9.0
+
+- Adds conservative structured Kconfig requirements from ebuild and inherited
+  eclass sources, including warning/fatal checks, disabled-symbol
+  requirements, USE conditions, source provenance, and check invocations.
+- Preserves shell-dependent `CONFIG_CHECK` behavior as explicit dynamic
+  evidence and lets strict consumers reject incomplete evaluation without
+  executing package shell code.
+- Adds installed out-of-tree kernel-module classification from inherited
+  eclasses and VDB-owned module artifacts.
+- Adds explicit target-kernel rebuild states without consulting the running
+  kernel implicitly.
+- Adds REQUIRED_USE and inherited-eclass metadata to repository candidates.
+- Optionally includes candidates in stabilized system snapshots and evaluates
+  prospective visibility and effective USE solely from captured snapshot
+  evidence.
+
 ## v0.8.2
 
 - Expands configuration references against the preceding assignment

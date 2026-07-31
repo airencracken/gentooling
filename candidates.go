@@ -19,6 +19,8 @@ type RepositoryCandidate struct {
 	EAPI         string
 	Keywords     []string
 	DeclaredUse  []UseDeclaration
+	Inherited    []string
+	RequiredUse  string
 	Dependencies DependencyMetadata
 	MetadataPath string
 }
@@ -243,8 +245,20 @@ func readRepositoryCandidate(task candidateTask, afterRead func(string)) (Reposi
 		return RepositoryCandidate{}, &issue
 	}
 	id.Slot, id.Subslot, _ = strings.Cut(values["SLOT"], "/")
+	inherited := strings.Fields(values["INHERITED"])
+	if len(inherited) == 0 {
+		fields := strings.Fields(values["_eclasses_"])
+		if len(fields)%2 != 0 {
+			issue := Issue{Code: IssueInvalidMetadata, Path: task.path, Package: &id, Message: "candidate metadata has malformed _eclasses_", Cause: ErrInvalidData}
+			return RepositoryCandidate{}, &issue
+		}
+		for index := 0; index+1 < len(fields); index += 2 {
+			inherited = append(inherited, fields[index])
+		}
+	}
 	candidate := RepositoryCandidate{
 		ID: id, EAPI: values["EAPI"], Keywords: strings.Fields(values["KEYWORDS"]),
+		Inherited: inherited, RequiredUse: values["REQUIRED_USE"],
 		Dependencies: DependencyMetadata{
 			Depend: values["DEPEND"], RDepend: values["RDEPEND"], BDepend: values["BDEPEND"],
 			IDepend: values["IDEPEND"], PDepend: values["PDEPEND"],

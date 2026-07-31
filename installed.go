@@ -56,12 +56,13 @@ func (d UseDeclaration) String() string {
 type IssueCode string
 
 const (
-	IssueMalformedIdentity  IssueCode = "malformed_identity"
-	IssueInterruptedRecord  IssueCode = "interrupted_record"
-	IssueCorruptRecord      IssueCode = "corrupt_record"
-	IssueUnreadableRecord   IssueCode = "unreadable_record"
-	IssueInvalidMetadata    IssueCode = "invalid_metadata"
-	IssueConcurrentMutation IssueCode = "concurrent_mutation"
+	IssueMalformedIdentity   IssueCode = "malformed_identity"
+	IssueInterruptedRecord   IssueCode = "interrupted_record"
+	IssueCorruptRecord       IssueCode = "corrupt_record"
+	IssueUnreadableRecord    IssueCode = "unreadable_record"
+	IssueInvalidMetadata     IssueCode = "invalid_metadata"
+	IssueConcurrentMutation  IssueCode = "concurrent_mutation"
+	IssueDynamicKernelPolicy IssueCode = "dynamic_kernel_policy"
 )
 
 type Issue struct {
@@ -103,6 +104,7 @@ type InstalledPackage struct {
 	EAPI         string
 	EnabledUse   []string
 	DeclaredUse  []UseDeclaration
+	Inherited    []string
 	Dependencies DependencyMetadata
 	Build        BuildMetadata
 	Contents     string
@@ -433,6 +435,7 @@ func readInstalledRecord(dir string, id PackageID, includeContents bool, afterRe
 		ID: id, EAPI: values["EAPI"],
 		EnabledUse:  enabled,
 		DeclaredUse: declared,
+		Inherited:   strings.Fields(optional("INHERITED")),
 		Dependencies: DependencyMetadata{
 			Depend: optional("DEPEND"), RDepend: optional("RDEPEND"), BDepend: optional("BDEPEND"),
 			IDepend: optional("IDEPEND"), PDepend: optional("PDEPEND"),
