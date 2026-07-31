@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.7.0
+
+- Adds root-aware repos.conf discovery with deterministic master-before-child
+  ordering, sync metadata, priorities, main-repository identity, and source
+  provenance.
+- Rebases live-root repository locations beneath explicit alternate roots and
+  automatically supplies discovered repositories to profile/config loading.
+- Adds explicit `LockedAndStabilized` and `StabilizedLockless` snapshot modes.
+- Records the achieved snapshot consistency mode and never silently falls back
+  after an unreadable Portage lock.
+- Adds typed repository-cycle and unavailable-lock errors.
+
 ## v0.6.0
 
 - Adds prospective package visibility evaluation with typed visible,

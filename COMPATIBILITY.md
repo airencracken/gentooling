@@ -29,3 +29,8 @@ Visibility outcomes, stability, effective keyword ordering, mask/unmask
 precedence, and evidence ordering are public contracts. An empty matching
 `package.accept_keywords` rule means the host testing keyword. Explicit command
 environment `ACCEPT_KEYWORDS` resets disk policy before applying its values.
+
+Repository locations are interpreted relative to explicit `SystemPaths.Root`,
+and discovered repositories are ordered masters before children. Snapshot
+consistency modes are validated public evidence: locked mode never degrades to
+lockless mode implicitly.

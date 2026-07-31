@@ -27,6 +27,7 @@ type FlagChange struct {
 
 type EffectiveConfig struct {
 	Variables         map[string]string
+	Repositories      []Repository
 	Profile           *Profile
 	ProfileUse        []FlagChange
 	UserUse           []FlagChange
@@ -56,6 +57,21 @@ var configReferencePattern = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`
 func ReadEffectiveConfig(ctx context.Context, paths SystemPaths, options ConfigOptions) (EffectiveConfig, error) {
 	if err := ctx.Err(); err != nil {
 		return EffectiveConfig{}, err
+	}
+	var repositories []Repository
+	if len(paths.Repositories) == 0 && paths.ReposConf != "" {
+		discovered, err := ReadRepositories(ctx, paths)
+		if err != nil {
+			return EffectiveConfig{}, err
+		}
+		repositories = discovered
+		for _, repository := range discovered {
+			paths.Repositories = append(paths.Repositories, RepositoryPath{Name: repository.Name, Path: repository.Location})
+		}
+	} else {
+		for _, repository := range paths.Repositories {
+			repositories = append(repositories, Repository{Name: repository.Name, Location: repository.Path})
+		}
 	}
 	values := make(map[string]configValue)
 	var allAssignments []configValue
@@ -101,7 +117,7 @@ func ReadEffectiveConfig(ctx context.Context, paths SystemPaths, options ConfigO
 	mergeConfigValues(values, userAssignments)
 	resolveConfigValues(values)
 
-	result := EffectiveConfig{Variables: make(map[string]string), Profile: profile}
+	result := EffectiveConfig{Variables: make(map[string]string), Repositories: repositories, Profile: profile}
 	for name, value := range values {
 		result.Variables[name] = value.value
 	}
@@ -351,6 +367,7 @@ func incrementalConfigVariable(name string) bool {
 
 func cloneEffectiveConfig(input EffectiveConfig) EffectiveConfig {
 	input.Variables = cloneStringMap(input.Variables)
+	input.Repositories = cloneRepositories(input.Repositories)
 	input.ProfileUse = append([]FlagChange(nil), input.ProfileUse...)
 	input.UserUse = append([]FlagChange(nil), input.UserUse...)
 	input.CommandUse = append([]FlagChange(nil), input.CommandUse...)

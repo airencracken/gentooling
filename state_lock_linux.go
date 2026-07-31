@@ -46,7 +46,7 @@ func observeStateLock(ctx context.Context, path string) (observedStateLock, erro
 		return observedStateLock{}, nil
 	}
 	if err != nil {
-		return observedStateLock{}, fmt.Errorf("observe Portage state lock %q: %w", path, err)
+		return observedStateLock{}, fmt.Errorf("%w: observe Portage state lock %q: %w", ErrStateLockUnavailable, path, err)
 	}
 	lock := syscall.Flock_t{Type: syscall.F_RDLCK, Whence: 0}
 	for {
@@ -56,7 +56,7 @@ func observeStateLock(ctx context.Context, path string) (observedStateLock, erro
 		}
 		if !errors.Is(err, syscall.EACCES) && !errors.Is(err, syscall.EAGAIN) {
 			file.Close()
-			return observedStateLock{}, fmt.Errorf("observe Portage state lock %q: %w", path, err)
+			return observedStateLock{}, fmt.Errorf("%w: observe Portage state lock %q: %w", ErrStateLockUnavailable, path, err)
 		}
 		select {
 		case <-ctx.Done():

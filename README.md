@@ -11,6 +11,7 @@ diagnostics remain deterministic.
 
 ```go
 paths := gentooling.DefaultSystemPaths("/")
+repositories, err := gentooling.ReadRepositories(ctx, paths)
 inventory, err := gentooling.ReadInstalled(ctx, paths, gentooling.InstalledOptions{
     Integrity: gentooling.RequireComplete,
 })
@@ -70,6 +71,18 @@ which do not honor those locks. The call waits for cooperating writers,
 respects context cancellation, retries a bounded number of observations, and
 returns `ErrConcurrentMutation` rather than a mixed view when state does not
 stabilize.
+
+Alternate-root callers use the same absolute locations normally written in
+repos.conf; Gentooling rebases them beneath `SystemPaths.Root` and never
+consults the corresponding host paths. Repositories are returned
+master-before-child and are included in effective configuration and combined
+snapshots.
+
+`LockedAndStabilized` is the default snapshot guarantee. Unprivileged
+inspection may explicitly request `StabilizedLockless`; Gentooling records that
+mode in the result and still requires consecutive agreeing observations.
+Failure to read a lock returns `ErrStateLockUnavailable` and never triggers an
+implicit lockless fallback.
 
 `ReadSelections` independently observes the world lock while reading user
 selections. Profile policy remains protected by validation rather than a

@@ -38,6 +38,32 @@ func TestReadSystemSnapshotReturnsConsistentCombinedState(t *testing.T) {
 	if got.Config.Profile == nil || len(got.Selections.System) == 0 || len(got.Config.CommandUse) != 1 {
 		t.Fatalf("policy snapshot = %+v", got)
 	}
+	if got.Consistency != LockedAndStabilized {
+		t.Fatalf("consistency = %v", got.Consistency)
+	}
+}
+
+func TestReadSystemSnapshotSupportsExplicitStabilizedLocklessMode(t *testing.T) {
+	paths := snapshotFixture(t)
+	got, err := ReadSystemSnapshot(context.Background(), paths, SnapshotOptions{
+		Consistency: StabilizedLockless,
+		Installed:   InstalledOptions{Integrity: RequireComplete},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Consistency != StabilizedLockless {
+		t.Fatalf("consistency = %v", got.Consistency)
+	}
+}
+
+func TestReadSystemSnapshotRejectsUnknownConsistencyMode(t *testing.T) {
+	_, err := ReadSystemSnapshot(context.Background(), SystemPaths{}, SnapshotOptions{
+		Consistency: SnapshotConsistency(255),
+	})
+	if !errors.Is(err, ErrInvalidData) {
+		t.Fatalf("error = %v", err)
+	}
 }
 
 func TestReadSystemSnapshotRejectsInvalidAttempts(t *testing.T) {

@@ -8,12 +8,16 @@ import (
 	"sync"
 )
 
-var ErrLockObservationUnsupported = errors.New("gentooling: Portage lock observation unsupported")
+var (
+	ErrLockObservationUnsupported = errors.New("gentooling: Portage lock observation unsupported")
+	ErrStateLockUnavailable       = errors.New("gentooling: Portage state lock unavailable")
+)
 
 // SnapshotOptions configures one combined system-state observation.
 type SnapshotOptions struct {
-	Installed InstalledOptions
-	Config    ConfigOptions
+	Installed   InstalledOptions
+	Config      ConfigOptions
+	Consistency SnapshotConsistency
 	// Attempts is the maximum number of complete observations. Zero uses 3.
 	Attempts int
 
@@ -23,15 +27,29 @@ type SnapshotOptions struct {
 // SystemSnapshot is a mutually consistent view of installed packages,
 // effective Portage policy, and world/system selections.
 type SystemSnapshot struct {
-	Installed  InstalledInventory
-	Config     EffectiveConfig
-	Selections Selections
+	Installed    InstalledInventory
+	Config       EffectiveConfig
+	Repositories []Repository
+	Selections   Selections
+	Consistency  SnapshotConsistency
 }
 
+// SnapshotConsistency selects an explicit system-snapshot guarantee.
+type SnapshotConsistency uint8
+
+const (
+	// LockedAndStabilized observes Portage-compatible VDB/world locks and then
+	// requires two agreeing complete observations.
+	LockedAndStabilized SnapshotConsistency = iota
+	// StabilizedLockless skips lock files and requires agreeing observations.
+	// It is intended for explicit unprivileged inspection, never fallback.
+	StabilizedLockless
+)
+
 // ReadSystemSnapshot returns only after two consecutive complete observations
-// agree while shared VDB and world locks exclude cooperating package-state
-// writers. Persistent change is reported as ErrConcurrentMutation instead of
-// returning mixed state.
+// agree. LockedAndStabilized additionally holds shared VDB and world locks.
+// Persistent change is reported as ErrConcurrentMutation instead of returning
+// mixed state.
 func ReadSystemSnapshot(ctx context.Context, paths SystemPaths, options SnapshotOptions) (SystemSnapshot, error) {
 	if err := ctx.Err(); err != nil {
 		return SystemSnapshot{}, err
@@ -43,11 +61,18 @@ func ReadSystemSnapshot(ctx context.Context, paths SystemPaths, options Snapshot
 	if attempts < 2 {
 		return SystemSnapshot{}, fmt.Errorf("%w: snapshot attempts must be at least 2", ErrInvalidData)
 	}
-	locks, err := observeStateLocks(ctx, paths)
-	if err != nil {
-		return SystemSnapshot{}, err
+	if options.Consistency != LockedAndStabilized && options.Consistency != StabilizedLockless {
+		return SystemSnapshot{}, fmt.Errorf("%w: unknown snapshot consistency mode %d", ErrInvalidData, options.Consistency)
 	}
-	defer releaseStateLocks(locks)
+	var locks []observedStateLock
+	var err error
+	if options.Consistency == LockedAndStabilized {
+		locks, err = observeStateLocks(ctx, paths)
+		if err != nil {
+			return SystemSnapshot{}, err
+		}
+		defer releaseStateLocks(locks)
+	}
 	previous, err := readSystemObservation(ctx, paths, options)
 	if err != nil {
 		return SystemSnapshot{}, err
@@ -61,6 +86,7 @@ func ReadSystemSnapshot(ctx context.Context, paths SystemPaths, options Snapshot
 			return SystemSnapshot{}, readErr
 		}
 		if reflect.DeepEqual(previous, current) {
+			current.Consistency = options.Consistency
 			return current, nil
 		}
 		previous = current
@@ -121,5 +147,6 @@ func readSystemObservation(ctx context.Context, paths SystemPaths, options Snaps
 	}
 	selections := Selections{World: world, System: system}
 	result.Installed, result.Config, result.Selections = inventory, config, selections
+	result.Repositories = cloneRepositories(config.Repositories)
 	return result, nil
 }

@@ -10,6 +10,7 @@ type SystemPaths struct {
 	ConfigRoot    string
 	VDB           string
 	World         string
+	ReposConf     string
 	MakeGlobals   string
 	Repositories  []RepositoryPath
 	ActiveProfile string
@@ -28,6 +29,7 @@ func DefaultSystemPaths(root string) SystemPaths {
 		ConfigRoot:    filepath.Join(clean, "etc", "portage"),
 		VDB:           filepath.Join(clean, "var", "db", "pkg"),
 		World:         filepath.Join(clean, "var", "lib", "portage", "world"),
+		ReposConf:     filepath.Join(clean, "etc", "portage", "repos.conf"),
 		MakeGlobals:   filepath.Join(clean, "usr", "share", "portage", "config", "make.globals"),
 		ActiveProfile: filepath.Join(clean, "etc", "portage", "make.profile"),
 	}

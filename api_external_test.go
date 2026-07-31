@@ -127,3 +127,27 @@ func TestProspectiveVisibilityPublicContract(t *testing.T) {
 		t.Fatalf("public visibility contract = %+v", result)
 	}
 }
+
+func TestRepositoryDiscoveryAndLocklessSnapshotPublicContract(t *testing.T) {
+	root := t.TempDir()
+	paths := gentooling.DefaultSystemPaths(root)
+	if paths.ReposConf == "" {
+		t.Fatal("default repos.conf path is empty")
+	}
+	repositories, err := gentooling.ReadRepositories(context.Background(), paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(repositories) != 0 {
+		t.Fatalf("missing repos.conf discovered repositories: %+v", repositories)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = gentooling.ReadSystemSnapshot(ctx, paths, gentooling.SnapshotOptions{
+		Consistency: gentooling.StabilizedLockless,
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("lockless snapshot cancellation = %v", err)
+	}
+}
