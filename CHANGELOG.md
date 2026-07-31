@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.10.1
+
+- Evaluates `MERGE_TYPE` source/binary guards around kernel checks.
+- Accepts combined `declare` flags on static associative arrays, including
+  Python's `declare -rgA` form, and normalizes quoted associative-array keys.
+- Treats an empty local `CONFIG_CHECK` declaration as the reset preceding a
+  bounded append loop.
+
 ## v0.10.0
 
 - Adds bounded, phase-aware kernel requirement evaluation at actual

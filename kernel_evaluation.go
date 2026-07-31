@@ -82,13 +82,13 @@ func EvaluateKernelRequirements(ctx context.Context, candidate RepositoryCandida
 	}
 	result := EvaluatedKernelRequirements{Package: set.Package, Complete: true}
 	for _, requirement := range set.Requirements {
-		base := kernelEvidenceApplicability(requirement.Conditions, requirement.ConditionExpression, use, useKnown, evaluation.KernelRelease)
+		base := kernelEvidenceApplicability(requirement.Conditions, requirement.ConditionExpression, use, useKnown, evaluation.KernelRelease, evaluation.MergeType)
 		invocations := invocationsFor(requirement.Function, requirement.Source, set.Invocations, set.Calls, evaluation.Phase)
 		if len(invocations) == 0 {
 			invocations = []KernelCheckInvocation{{}}
 		}
 		for _, invocation := range invocations {
-			applicability := combineApplicability(base, invocationApplicability(invocation, use, useKnown, evaluation.KernelRelease))
+			applicability := combineApplicability(base, invocationApplicability(invocation, use, useKnown, evaluation.KernelRelease, evaluation.MergeType))
 			if invocation.Function == "" {
 				applicability = Inapplicable
 			}
@@ -97,17 +97,20 @@ func EvaluateKernelRequirements(ctx context.Context, candidate RepositoryCandida
 				Applicability: applicability, Conditions: cloneUseConditions(requirement.Conditions), Invocation: invocation,
 				Source: requirement.Source, Origin: requirement.Origin, AssignmentOperator: requirement.AssignmentOperator,
 			})
+			if applicability == Indeterminate && requirement.Severity == KernelRequirementFatal {
+				result.Complete = false
+			}
 		}
 	}
 	applyRequirementAssignmentFlow(result.Requirements)
 	for _, dynamic := range set.Dynamic {
-		base := kernelEvidenceApplicability(dynamic.Conditions, dynamic.ConditionExpression, use, useKnown, evaluation.KernelRelease)
+		base := kernelEvidenceApplicability(dynamic.Conditions, dynamic.ConditionExpression, use, useKnown, evaluation.KernelRelease, evaluation.MergeType)
 		invocations := invocationsFor(dynamic.Function, dynamic.Source, set.Invocations, set.Calls, evaluation.Phase)
 		if len(invocations) == 0 {
 			invocations = []KernelCheckInvocation{{}}
 		}
 		for _, invocation := range invocations {
-			applicability := combineApplicability(base, invocationApplicability(invocation, use, useKnown, evaluation.KernelRelease))
+			applicability := combineApplicability(base, invocationApplicability(invocation, use, useKnown, evaluation.KernelRelease, evaluation.MergeType))
 			if invocation.Function == "" {
 				applicability = Inapplicable
 			}
@@ -165,14 +168,14 @@ func applyRequirementAssignmentFlow(requirements []EvaluatedKernelRequirement) {
 	}
 }
 
-func kernelEvidenceApplicability(conditions []UseCondition, expression string, enabled map[string]bool, known bool, kernelRelease string) Applicability {
+func kernelEvidenceApplicability(conditions []UseCondition, expression string, enabled map[string]bool, known bool, kernelRelease string, mergeType MergeType) Applicability {
 	legacy := conditionsApplicability(conditions, enabled, known)
 	if expression != "" {
 		node, err := parseUseConditionExpression(expression)
 		if err != nil {
 			return Indeterminate
 		}
-		return combineApplicability(legacy, node.evaluate(conditionEvaluation{use: enabled, useKnown: known, kernelRelease: kernelRelease}))
+		return combineApplicability(legacy, node.evaluate(conditionEvaluation{use: enabled, useKnown: known, kernelRelease: kernelRelease, mergeType: mergeType}))
 	}
 	return legacy
 }
@@ -207,11 +210,11 @@ func invocationsFor(function string, source PolicySource, invocations []KernelCh
 	return matched
 }
 
-func invocationApplicability(invocation KernelCheckInvocation, enabled map[string]bool, known bool, kernelRelease string) Applicability {
+func invocationApplicability(invocation KernelCheckInvocation, enabled map[string]bool, known bool, kernelRelease string, mergeType MergeType) Applicability {
 	if invocation.Function == "" {
 		return Inapplicable
 	}
-	return kernelEvidenceApplicability(invocation.Conditions, invocation.ConditionExpression, enabled, known, kernelRelease)
+	return kernelEvidenceApplicability(invocation.Conditions, invocation.ConditionExpression, enabled, known, kernelRelease, mergeType)
 }
 
 func combineApplicability(left, right Applicability) Applicability {

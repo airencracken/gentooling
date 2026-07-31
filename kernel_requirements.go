@@ -106,7 +106,8 @@ var (
 	kernelIfUsePattern      = regexp.MustCompile(`^if\s+use\s+(!?)([A-Za-z0-9+_@-]+)\s*;\s*then\s*$`)
 	kernelFunctionPattern   = regexp.MustCompile(`^([A-Za-z0-9+_.-]+)\s*\(\)\s*\{`)
 	kernelSymbolPattern     = regexp.MustCompile(`^[A-Z0-9_]+$`)
-	kernelArrayPattern      = regexp.MustCompile(`^(?:local\s+|declare\s+-[aA]\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*\((?s:(.*))\)\s*$`)
+	kernelArrayPattern      = regexp.MustCompile(`^(?:local\s+|declare\s+-[A-Za-z]*[aA][A-Za-z]*\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*\((?s:(.*))\)\s*$`)
+	kernelLocalCheckPattern = regexp.MustCompile(`^local\s+CONFIG_CHECK\s*$`)
 	kernelArrayKeyPattern   = regexp.MustCompile(`\[([^][[:space:]]+)\]\s*=\s*(?:"[^"]*"|'[^']*'|[^[:space:]]+)`)
 	kernelLoopPattern       = regexp.MustCompile(`^for\s+([A-Za-z_][A-Za-z0-9_]*)\s+in\s+"?\$\{(!?)([A-Za-z_][A-Za-z0-9_]*)\[@\]\}"?\s*;?\s*do\s*$`)
 )
@@ -225,6 +226,7 @@ func readKernelRequirementSource(ctx context.Context, path, origin string, resul
 	var conditions []UseCondition
 	var controlStack []kernelControlFrame
 	staticArrays := make(map[string]staticKernelArray)
+	pendingLocalReset := make(map[string]bool)
 	for scanner.Scan() {
 		lineNumber++
 		if err := ctx.Err(); err != nil {
@@ -247,6 +249,10 @@ func readKernelRequirementSource(ctx context.Context, path, origin string, resul
 			if array, ok := parseStaticKernelArray(match[2]); ok {
 				staticArrays[match[1]] = array
 			}
+			continue
+		}
+		if kernelLocalCheckPattern.MatchString(line) {
+			pendingLocalReset[function] = true
 			continue
 		}
 		if match := kernelFunctionPattern.FindStringSubmatch(line); len(match) != 0 {
@@ -362,6 +368,10 @@ func readKernelRequirementSource(ctx context.Context, path, origin string, resul
 		}
 		value := match[2]
 		assignmentOperator := match[1]
+		if assignmentOperator == "+=" && pendingLocalReset[function] {
+			assignmentOperator = "="
+			delete(pendingLocalReset, function)
+		}
 		if value == "" {
 			value = match[3]
 		}
@@ -500,7 +510,7 @@ func parseStaticKernelArray(body string) (staticKernelArray, bool) {
 	}
 	array := staticKernelArray{}
 	for _, match := range kernelArrayKeyPattern.FindAllStringSubmatch(body, -1) {
-		array.keys = append(array.keys, match[1])
+		array.keys = append(array.keys, strings.Trim(match[1], "\"'"))
 	}
 	cleaned := kernelArrayKeyPattern.ReplaceAllString(body, "")
 	if len(array.keys) == 0 {
@@ -544,6 +554,12 @@ func shellIfExpression(line, keyword string) string {
 	value := strings.TrimSpace(strings.TrimPrefix(line, keyword))
 	value = strings.TrimSpace(strings.TrimSuffix(value, "then"))
 	value = strings.TrimSpace(strings.TrimSuffix(value, ";"))
+	value = strings.TrimSpace(value)
+	if strings.HasPrefix(value, "[[") && strings.HasSuffix(value, "]]") {
+		inner := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(value, "[["), "]]"))
+		inner = strings.ReplaceAll(inner, "${MERGE_TYPE}", "merge_type")
+		return inner
+	}
 	return value
 }
 

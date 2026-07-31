@@ -15,6 +15,7 @@ type conditionEvaluation struct {
 	use           map[string]bool
 	useKnown      bool
 	kernelRelease string
+	mergeType     MergeType
 }
 
 type conditionUse struct{ flag string }
@@ -26,12 +27,29 @@ type conditionKernel struct {
 	version  []int
 }
 type conditionKernelConfigExists struct{}
+type conditionMergeType struct {
+	operator string
+	value    MergeType
+}
 
 func (conditionKernelConfigExists) evaluate(evaluation conditionEvaluation) Applicability {
 	if evaluation.kernelRelease == "" {
 		return Indeterminate
 	}
 	return Applicable
+}
+func (node conditionMergeType) evaluate(evaluation conditionEvaluation) Applicability {
+	if evaluation.mergeType == "" {
+		return Indeterminate
+	}
+	matched := evaluation.mergeType == node.value
+	if node.operator == "!=" {
+		matched = !matched
+	}
+	if matched {
+		return Applicable
+	}
+	return Inapplicable
 }
 
 func (node conditionUse) evaluate(evaluation conditionEvaluation) Applicability {
@@ -121,7 +139,7 @@ func tokenizeCondition(input string) []string {
 			index++
 			continue
 		}
-		if strings.HasPrefix(input[index:], "&&") || strings.HasPrefix(input[index:], "||") {
+		if strings.HasPrefix(input[index:], "&&") || strings.HasPrefix(input[index:], "||") || strings.HasPrefix(input[index:], "==") || strings.HasPrefix(input[index:], "!=") {
 			tokens = append(tokens, input[index:index+2])
 			index += 2
 			continue
@@ -205,6 +223,20 @@ func (parser *conditionParser) parseUnary() (conditionNode, error) {
 	}
 	if parser.accept("linux_config_exists") {
 		return conditionKernelConfigExists{}, nil
+	}
+	if parser.accept("merge_type") {
+		if parser.index+1 >= len(parser.tokens) {
+			return nil, fmt.Errorf("%w: incomplete merge type predicate", ErrInvalidData)
+		}
+		operator, value := parser.tokens[parser.index], MergeType(parser.tokens[parser.index+1])
+		parser.index += 2
+		if operator != "==" && operator != "!=" {
+			return nil, fmt.Errorf("%w: unsupported merge type operator %q", ErrInvalidData, operator)
+		}
+		if value != MergeSource && value != MergeBinary {
+			return nil, fmt.Errorf("%w: unsupported merge type %q", ErrInvalidData, value)
+		}
+		return conditionMergeType{operator: operator, value: value}, nil
 	}
 	if !parser.accept("use") || parser.index >= len(parser.tokens) {
 		return nil, fmt.Errorf("%w: expected bounded 'use FLAG' condition", ErrInvalidData)
