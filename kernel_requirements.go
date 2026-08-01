@@ -375,6 +375,10 @@ func readKernelRequirementSource(ctx context.Context, path, origin string, resul
 		if value == "" {
 			value = match[3]
 		}
+		if remainder, ok := boundedConfigCheckSelfAppend(value, assignmentOperator); ok {
+			value = remainder
+			assignmentOperator = "+="
+		}
 		expandedValues, expanded := expandStaticLoopValues(value, controlStack)
 		if !expanded || len(expandedValues) == 0 {
 			expandedValues = []string{value}
@@ -410,6 +414,22 @@ func readKernelRequirementSource(ctx context.Context, path, origin string, resul
 		return fmt.Errorf("read kernel requirement source %q: %w", path, err)
 	}
 	return nil
+}
+
+func boundedConfigCheckSelfAppend(value, operator string) (string, bool) {
+	if operator != "=" {
+		return "", false
+	}
+	trimmed := strings.TrimSpace(value)
+	const self = "${CONFIG_CHECK}"
+	if !strings.HasPrefix(trimmed, self) {
+		return "", false
+	}
+	remainder := strings.TrimSpace(strings.TrimPrefix(trimmed, self))
+	if strings.Contains(remainder, self) {
+		return "", false
+	}
+	return remainder, true
 }
 
 func dynamicKernelSeverity(values []string) KernelRequirementSeverity {
@@ -557,7 +577,13 @@ func shellIfExpression(line, keyword string) string {
 	value = strings.TrimSpace(value)
 	if strings.HasPrefix(value, "[[") && strings.HasSuffix(value, "]]") {
 		inner := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(value, "[["), "]]"))
+		inner = strings.ReplaceAll(inner, "\"${MERGE_TYPE}\"", "merge_type")
+		inner = strings.ReplaceAll(inner, "'${MERGE_TYPE}'", "merge_type")
 		inner = strings.ReplaceAll(inner, "${MERGE_TYPE}", "merge_type")
+		for _, mergeType := range []string{"source", "binary", "buildonly"} {
+			inner = strings.ReplaceAll(inner, "\""+mergeType+"\"", mergeType)
+			inner = strings.ReplaceAll(inner, "'"+mergeType+"'", mergeType)
+		}
 		return inner
 	}
 	return value

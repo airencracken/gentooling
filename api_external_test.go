@@ -181,6 +181,9 @@ func TestKernelConsumerPublicContracts(t *testing.T) {
 		Phase: "pkg_setup", KernelRelease: "7.1.5", Architecture: "amd64",
 		MergeType: gentooling.MergeSource, EffectiveUSE: []string{"modules"},
 	}
+	if gentooling.MergeBuildOnly != "buildonly" {
+		t.Fatalf("build-only merge contract = %q", gentooling.MergeBuildOnly)
+	}
 	evaluated := gentooling.EvaluatedKernelRequirements{
 		Complete: true,
 		Requirements: []gentooling.EvaluatedKernelRequirement{{

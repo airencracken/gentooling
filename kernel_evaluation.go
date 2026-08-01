@@ -18,8 +18,9 @@ const (
 type MergeType string
 
 const (
-	MergeSource MergeType = "source"
-	MergeBinary MergeType = "binary"
+	MergeSource    MergeType = "source"
+	MergeBinary    MergeType = "binary"
+	MergeBuildOnly MergeType = "buildonly"
 )
 
 type KernelRequirementContext struct {
@@ -64,7 +65,7 @@ type EvaluatedKernelRequirements struct {
 }
 
 func EvaluateKernelRequirements(ctx context.Context, candidate RepositoryCandidate, repositories []Repository, evaluation KernelRequirementContext) (EvaluatedKernelRequirements, error) {
-	if evaluation.MergeType != "" && evaluation.MergeType != MergeSource && evaluation.MergeType != MergeBinary {
+	if evaluation.MergeType != "" && evaluation.MergeType != MergeSource && evaluation.MergeType != MergeBinary && evaluation.MergeType != MergeBuildOnly {
 		return EvaluatedKernelRequirements{}, fmt.Errorf("%w: unknown kernel requirement merge type %q", ErrInvalidData, evaluation.MergeType)
 	}
 	set, err := ReadKernelRequirements(ctx, candidate, repositories, KernelRequirementOptions{Integrity: AllowPartial})

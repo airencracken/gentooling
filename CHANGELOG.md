@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.10.2
+
+- Treats a single leading `CONFIG_CHECK="${CONFIG_CHECK} ..."` expansion as a
+  bounded append while rejecting additional or non-leading self references.
+- Adds the explicit `buildonly` merge type and evaluates quoted, boolean
+  `MERGE_TYPE` comparisons used by bubblewrap and Chromium's eclass.
+
 ## v0.10.1
 
 - Evaluates `MERGE_TYPE` source/binary guards around kernel checks.

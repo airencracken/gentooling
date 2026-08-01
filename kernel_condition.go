@@ -233,7 +233,7 @@ func (parser *conditionParser) parseUnary() (conditionNode, error) {
 		if operator != "==" && operator != "!=" {
 			return nil, fmt.Errorf("%w: unsupported merge type operator %q", ErrInvalidData, operator)
 		}
-		if value != MergeSource && value != MergeBinary {
+		if value != MergeSource && value != MergeBinary && value != MergeBuildOnly {
 			return nil, fmt.Errorf("%w: unsupported merge type %q", ErrInvalidData, value)
 		}
 		return conditionMergeType{operator: operator, value: value}, nil
