@@ -207,3 +207,14 @@ func TestKernelConsumerPublicContracts(t *testing.T) {
 		t.Fatal("candidate error contract changed")
 	}
 }
+
+func TestNewsAndPreservedLibraryPublicContracts(t *testing.T) {
+	news := gentooling.NewsState{Unread: []gentooling.NewsItem{{ID: "2026-01-01-example"}}}
+	if news.Unread[0].ID == "" {
+		t.Fatal("news identity is absent")
+	}
+	record := gentooling.PreservedLibraryRecord{Owner: gentooling.PackageID{Category: "dev-libs", Name: "example", Version: "1"}, Paths: []string{"/usr/lib/libexample.so.1"}}
+	if record.Owner.CPV() != "dev-libs/example-1" {
+		t.Fatalf("preserved owner = %+v", record.Owner)
+	}
+}

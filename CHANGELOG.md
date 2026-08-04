@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.11.0
+
+- Adds repository-aware, read-only GLEP 42 news parsing, relevance evaluation,
+  and interoperable Portage unread/skip state paths.
+- Adds strict, root-aware inspection of Portage's preserved-library registry,
+  including validated package owners and safe rooted library paths.
+- Treats missing and empty fresh-stage3 preserved-library registries as an
+  empty state while rejecting malformed non-empty evidence.
+
 ## v0.10.2
 
 - Treats a single leading `CONFIG_CHECK="${CONFIG_CHECK} ..."` expansion as a

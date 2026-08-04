@@ -54,6 +54,19 @@ use, err := config.EvaluateUse(ctx, gentooling.PackageContext{
 
 selections, err := gentooling.ReadSelections(ctx, paths)
 
+newsState, err := gentooling.ReadNewsState(ctx, gentooling.NewsPaths{
+    RepositoryName: "gentoo",
+    NewsDirectory:  "/var/db/repos/gentoo/metadata/news",
+    StateDirectory: "/var/lib/gentoo/news",
+}, gentooling.NewsContext{
+    Architecture: "amd64",
+    Profile: "default/linux/amd64/23.0",
+    InstalledPackages: installedIDs,
+})
+
+preserved, err := gentooling.ReadPreservedLibraries(ctx, "/",
+    "/var/lib/portage/preserved_libs_registry")
+
 snapshot, err := gentooling.ReadSystemSnapshot(ctx, paths, gentooling.SnapshotOptions{
     Installed: gentooling.InstalledOptions{
         Integrity: gentooling.RequireComplete,
