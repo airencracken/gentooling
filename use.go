@@ -76,6 +76,15 @@ func (config EffectiveConfig) EvaluateUse(ctx context.Context, packageContext Pa
 		decisions[declaration.Name] = decision
 	}
 	applyChange := func(change FlagChange, kind string) {
+		if change.Name == "*" && !change.Enabled {
+			for _, decision := range decisions {
+				decision.Enabled = false
+				decision.Evidence = append(decision.Evidence, UseEvidence{
+					Kind: kind, Source: change.Source, Layer: change.Layer,
+				})
+			}
+			return
+		}
 		if decision := decisions[change.Name]; decision != nil {
 			decision.Enabled = change.Enabled
 			decision.Evidence = append(decision.Evidence, UseEvidence{
@@ -114,6 +123,14 @@ func (config EffectiveConfig) EvaluateUse(ctx context.Context, packageContext Pa
 	}
 	result := UseEvaluation{Package: packageContext.ID, Decisions: make([]UseDecision, 0, len(decisions))}
 	for _, decision := range decisions {
+		// Force and mask are incremental sets. Apply their final membership
+		// after all layers so removing a policy restores the ordinary USE value.
+		if decision.Forced {
+			decision.Enabled = true
+		}
+		if decision.Masked {
+			decision.Enabled = false
+		}
 		result.Decisions = append(result.Decisions, *decision)
 	}
 	sort.Slice(result.Decisions, func(left, right int) bool {
@@ -154,12 +171,15 @@ func applyForceMaskLayer(ctx context.Context, layer ProfileLayer, packageContext
 		if decision == nil {
 			return
 		}
-		if strings.HasPrefix(raw, "-") {
-			return
+		present := !strings.HasPrefix(raw, "-")
+		if forced {
+			decision.Forced = present
 		}
-		decision.Enabled, decision.Forced, decision.Masked = enabled, decision.Forced || forced, decision.Masked || masked
+		if masked {
+			decision.Masked = present
+		}
 		decision.Evidence = append(decision.Evidence, UseEvidence{
-			Enabled: enabled, Kind: kind, Source: policySource, Layer: "profile",
+			Enabled: present == enabled, Kind: kind, Source: policySource, Layer: "profile",
 		})
 	}
 	for _, raw := range layer.UseForce {
@@ -194,7 +214,11 @@ func applyForceMaskLayer(ctx context.Context, layer ProfileLayer, packageContext
 			continue
 		}
 		err := applyMatchingRules(ctx, set.rules, packageContext.ID, declared, func(change FlagChange) {
-			apply(change.Name, set.kind, set.enabled, set.forced, set.masked, change.Source)
+			raw := change.Name
+			if !change.Enabled {
+				raw = "-" + raw
+			}
+			apply(raw, set.kind, set.enabled, set.forced, set.masked, change.Source)
 		})
 		if err != nil {
 			return err

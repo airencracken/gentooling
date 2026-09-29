@@ -17,6 +17,11 @@ type observedStateLock struct {
 	path string
 }
 
+// Linux open-file-description locks conflict with Portage's POSIX locks while
+// retaining each reader's lock when another descriptor in this process closes.
+// F_OFD_SETLK has been supported since Linux 3.15.
+const stateLockSet = 37
+
 func observeStateLocks(ctx context.Context, paths SystemPaths) ([]observedStateLock, error) {
 	return observeLockPaths(ctx, []string{PortageStateLockPath(paths.VDB), PortageStateLockPath(paths.World)})
 }
@@ -41,6 +46,9 @@ func observeLockPaths(ctx context.Context, lockPaths []string) ([]observedStateL
 }
 
 func observeStateLock(ctx context.Context, path string) (observedStateLock, error) {
+	if err := ctx.Err(); err != nil {
+		return observedStateLock{}, err
+	}
 	file, err := os.OpenFile(path, os.O_RDONLY, 0)
 	if errors.Is(err, os.ErrNotExist) {
 		return observedStateLock{}, nil
@@ -50,7 +58,7 @@ func observeStateLock(ctx context.Context, path string) (observedStateLock, erro
 	}
 	lock := syscall.Flock_t{Type: syscall.F_RDLCK, Whence: 0}
 	for {
-		err = syscall.FcntlFlock(file.Fd(), syscall.F_SETLK, &lock)
+		err = syscall.FcntlFlock(file.Fd(), stateLockSet, &lock)
 		if err == nil {
 			return observedStateLock{file: file, path: path}, nil
 		}
@@ -70,7 +78,7 @@ func observeStateLock(ctx context.Context, path string) (observedStateLock, erro
 func releaseStateLocks(locks []observedStateLock) {
 	for index := len(locks) - 1; index >= 0; index-- {
 		lock := syscall.Flock_t{Type: syscall.F_UNLCK, Whence: 0}
-		_ = syscall.FcntlFlock(locks[index].file.Fd(), syscall.F_SETLK, &lock)
+		_ = syscall.FcntlFlock(locks[index].file.Fd(), stateLockSet, &lock)
 		_ = locks[index].file.Close()
 	}
 }

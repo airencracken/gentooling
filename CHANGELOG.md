@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.11.1
+
+- Applies USE resets and profile force/mask removals without retaining stale
+  inherited policy or turning negative package entries into positive ones.
+- Keeps overlapping snapshot readers locked independently using Linux
+  open-file-description locks, interoperable with Portage's POSIX locks.
+- Requires Linux 3.15 or newer for lock-observing snapshots.
+
 ## v0.11.0
 
 - Adds repository-aware, read-only GLEP 42 news parsing, relevance evaluation,
